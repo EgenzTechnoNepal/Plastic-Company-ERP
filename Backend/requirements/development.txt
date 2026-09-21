@@ -1,0 +1,4 @@
+-r base.txt
+Faker>=40.0
+django-extensions>=3.2
+ipython>=8.0

@@ -1,0 +1,107 @@
+name: greenflow-erp-backend
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-greenflow_erp}
+      POSTGRES_USER: ${POSTGRES_USER:-greenflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-greenflow}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-greenflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      args:
+        REQUIREMENTS_FILE: requirements/development.txt
+    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://${POSTGRES_USER:-greenflow}:${POSTGRES_PASSWORD:-greenflow}@db:5432/${POSTGRES_DB:-greenflow_erp}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SEED_DEMO: ${SEED_DEMO:-0}
+      WAIT_FOR_DB_TIMEOUT: "60"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    build:
+      context: .
+      args:
+        REQUIREMENTS_FILE: requirements/development.txt
+    command: ["celery", "-A", "config", "worker", "-l", "info"]
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://${POSTGRES_USER:-greenflow}:${POSTGRES_PASSWORD:-greenflow}@db:5432/${POSTGRES_DB:-greenflow_erp}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SEED_DEMO: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_beat:
+    build:
+      context: .
+      args:
+        REQUIREMENTS_FILE: requirements/development.txt
+    command: ["celery", "-A", "config", "beat", "-l", "info"]
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://${POSTGRES_USER:-greenflow}:${POSTGRES_PASSWORD:-greenflow}@db:5432/${POSTGRES_DB:-greenflow_erp}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      SEED_DEMO: "0"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# Production profile: see docker-compose.prod.yml (Nginx TLS + Gunicorn).
+
+volumes:
+  postgres_data:

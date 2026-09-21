@@ -1,0 +1,17 @@
+node_modules
+dist
+.tanstack
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+.tmp
+tmp
+coverage
+.vscode
+.idea
+*.log
+.DS_Store
+eco-craft-flow.zip
