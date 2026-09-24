@@ -85,9 +85,9 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    # Host nginx already owns :80 — publish on localhost only; host proxies the domain here.
     ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
+      - "${NGINX_BIND:-127.0.0.1:8088}:80"
     volumes:
       - ./deploy/nginx.prod.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/certs:/etc/nginx/certs:ro

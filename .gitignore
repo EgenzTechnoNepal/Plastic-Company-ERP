@@ -63,6 +63,11 @@ Thumbs.db
 *.xls
 *.pptx
 
+# --- Local deploy helpers (contain secrets — never commit) ---
+_deploy_*.py
+_deploy_probe.py
+_deploy_server.py
+
 # --- Demo / docs / rough notes (keep out of this repo) ---
 demo-guide/
 docs/
