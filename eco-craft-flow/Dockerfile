@@ -46,13 +46,19 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PORT=8080
 
+# TanStack Start SSR imports packages like react at runtime — install prod deps.
+COPY package.json bun.lock* package-lock.json* ./
+RUN if [ -f package-lock.json ]; then npm ci --omit=dev; \
+    elif [ -f bun.lock ]; then npm install --omit=dev; \
+    else npm install --omit=dev; fi
+
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
 COPY passenger.cjs ./
 
 EXPOSE 8080
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=8 \
   CMD wget -qO- http://127.0.0.1:8080/login >/dev/null || exit 1
 
 CMD ["node", "passenger.cjs"]
