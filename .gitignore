@@ -4,6 +4,8 @@
 .env.*.local
 *.pem
 *.key
+deploy/certs/*.pem
+!deploy/certs/.gitkeep
 
 # --- Python ---
 .venv/

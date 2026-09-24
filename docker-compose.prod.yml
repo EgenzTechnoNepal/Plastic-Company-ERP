@@ -1,0 +1,104 @@
+# EcoWrap ERP — production stack (Neon Postgres + Redis + API + UI + Nginx)
+#
+# Usage on server:
+#   cp .env.example .env   # set DATABASE_URL (Neon), DJANGO_SECRET_KEY, domain hosts
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Domain: erpsystem.egenztechnonepal.com
+#   /           → frontend
+#   /api/       → Django API
+#   /admin/     → Django admin
+#   /health/    → backend health
+#   /static/    → Django static (admin CSS/JS)
+#   /media/     → uploads
+
+name: plastic-erp-prod
+
+services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./Backend
+      args:
+        REQUIREMENTS_FILE: requirements/production.txt
+    restart: unless-stopped
+    command:
+      [
+        "sh",
+        "-c",
+        "python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120",
+      ]
+    env_file:
+      - .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+      DEV_USE_SQLITE: "False"
+      # Neon pooler: do not keep long-lived DB connections
+      DB_CONN_MAX_AGE: "0"
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      WAIT_FOR_DB_TIMEOUT: "90"
+      ENSURE_ADMIN: "1"
+      SEED_DEMO: ${SEED_DEMO:-1}
+    volumes:
+      - staticfiles:/app/staticfiles
+      - media:/app/media
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  frontend:
+    build:
+      context: ./eco-craft-flow
+      target: production
+      args:
+        VITE_API_BASE_URL: /api/v1
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+      - staticfiles:/app/staticfiles:ro
+      - media:/app/media:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+volumes:
+  staticfiles:
+  media:
