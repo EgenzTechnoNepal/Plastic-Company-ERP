@@ -134,7 +134,8 @@ if (typeof PhusionPassenger !== "undefined") {
   server.listen("passenger");
 } else {
   const port = Number(process.env.PORT || 3000);
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`EcoWrap listening on ${port}`);
+  const host = process.env.HOST || "0.0.0.0";
+  server.listen(port, host, () => {
+    console.log(`EcoWrap listening on ${host}:${port}`);
   });
 }
