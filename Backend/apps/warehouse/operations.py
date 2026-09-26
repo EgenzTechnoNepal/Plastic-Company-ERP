@@ -88,6 +88,14 @@ class StockAdjustment(BaseModel):
         on_delete=models.PROTECT,
         related_name="+",
     )
+    receipt_layer = models.ForeignKey(
+        "inventory.InventoryReceiptLayer",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="adjustments",
+        help_text="Required for layer-level adjustments; never silently pick first layer",
+    )
     warehouse = models.ForeignKey("warehouse.Warehouse", on_delete=models.PROTECT, related_name="+")
     bin = models.ForeignKey(
         "warehouse.Bin", null=True, blank=True, on_delete=models.PROTECT, related_name="+"
@@ -147,6 +155,13 @@ class CycleCountLine(BaseModel):
         blank=True,
         on_delete=models.PROTECT,
         related_name="+",
+    )
+    receipt_layer = models.ForeignKey(
+        "inventory.InventoryReceiptLayer",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="cycle_count_lines",
     )
     expected_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     counted_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))

@@ -9,18 +9,48 @@ from apps.core.models import BaseModel
 
 class StockTxnType(models.TextChoices):
     GRN_RECEIPT = "GRN_RECEIPT", "GRN Receipt"
-    QC_RELEASE = "QC_RELEASE", "QC Release"
-    QC_REJECT = "QC_REJECT", "QC Reject"
-    PUTAWAY = "PUTAWAY", "Putaway"
+    QC_RELEASE = "QC_RELEASE", "QC Release (state event — no physical qty)"
+    QC_REJECT = "QC_REJECT", "QC Reject (state event — no physical qty)"
+    PUTAWAY = "PUTAWAY", "Putaway (legacy single entry)"
+    PUTAWAY_OUT = "PUTAWAY_OUT", "Putaway Out"
+    PUTAWAY_IN = "PUTAWAY_IN", "Putaway In"
     TRANSFER_OUT = "TRANSFER_OUT", "Transfer Out"
     TRANSFER_IN = "TRANSFER_IN", "Transfer In"
     ADJUSTMENT_IN = "ADJUSTMENT_IN", "Adjustment In"
     ADJUSTMENT_OUT = "ADJUSTMENT_OUT", "Adjustment Out"
-    RESERVATION = "RESERVATION", "Reservation"
-    RESERVATION_RELEASE = "RESERVATION_RELEASE", "Reservation Release"
+    RESERVATION = "RESERVATION", "Reservation (state event — no physical qty)"
+    RESERVATION_RELEASE = "RESERVATION_RELEASE", "Reservation Release (state event)"
     ISSUE = "ISSUE", "Issue"
     ISSUE_RETURN = "ISSUE_RETURN", "Issue Return"
-    LANDED_COST_REVALUE = "LANDED_COST_REVALUE", "Landed Cost Revalue"
+    LANDED_COST_REVALUE = "LANDED_COST_REVALUE", "Landed Cost Revalue (valuation event)"
+
+
+# Physical quantity movements used for ledger ↔ layer reconciliation
+PHYSICAL_TXN_TYPES = frozenset(
+    {
+        StockTxnType.GRN_RECEIPT,
+        StockTxnType.PUTAWAY,
+        StockTxnType.PUTAWAY_OUT,
+        StockTxnType.PUTAWAY_IN,
+        StockTxnType.TRANSFER_OUT,
+        StockTxnType.TRANSFER_IN,
+        StockTxnType.ADJUSTMENT_IN,
+        StockTxnType.ADJUSTMENT_OUT,
+        StockTxnType.ISSUE,
+        StockTxnType.ISSUE_RETURN,
+    }
+)
+
+# Zero-qty audit/state events — must never be treated as physical stock movement
+STATE_EVENT_TXN_TYPES = frozenset(
+    {
+        StockTxnType.QC_RELEASE,
+        StockTxnType.QC_REJECT,
+        StockTxnType.RESERVATION,
+        StockTxnType.RESERVATION_RELEASE,
+        StockTxnType.LANDED_COST_REVALUE,
+    }
+)
 
 
 class StockLedgerEntry(BaseModel):
@@ -71,6 +101,10 @@ class StockLedgerEntry(BaseModel):
     reference_id = models.UUIDField()
     reason = models.CharField(max_length=255, blank=True)
     occurred_at = models.DateTimeField()
+    is_state_event = models.BooleanField(
+        default=False,
+        help_text="True for QC/reservation/valuation audit rows — not physical quantity movement.",
+    )
     reversal_of = models.ForeignKey(
         "self",
         null=True,
@@ -125,6 +159,7 @@ class StockReservation(BaseModel):
         on_delete=models.PROTECT,
         related_name="reservations",
     )
+    # Legacy single-layer pointer kept for API compatibility; allocations are authoritative
     receipt_layer = models.ForeignKey(
         "inventory.InventoryReceiptLayer",
         null=True,
@@ -152,5 +187,32 @@ class StockReservation(BaseModel):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(quantity__gt=0), name="ck_reservation_qty_positive"
+            ),
+        ]
+
+
+class StockReservationAllocation(BaseModel):
+    """One reservation may span multiple receipt layers."""
+
+    reservation = models.ForeignKey(
+        StockReservation, on_delete=models.CASCADE, related_name="allocations"
+    )
+    receipt_layer = models.ForeignKey(
+        "inventory.InventoryReceiptLayer",
+        on_delete=models.PROTECT,
+        related_name="reservation_allocations",
+    )
+    lot = models.ForeignKey(
+        "inventory.InventoryLot", on_delete=models.PROTECT, related_name="reservation_allocations"
+    )
+    quantity = models.DecimalField(max_digits=18, decimal_places=6)
+
+    class Meta(BaseModel.Meta):
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(quantity__gt=0), name="ck_resalloc_qty_positive"
+            ),
+            models.UniqueConstraint(
+                fields=["reservation", "receipt_layer"], name="uq_resalloc_reservation_layer"
             ),
         ]

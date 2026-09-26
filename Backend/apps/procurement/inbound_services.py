@@ -126,6 +126,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             bin=grn.receiving_bin,
             received_at=grn.received_at or now,
             receipt_sequence=seq,
+            fifo_rank=seq,
             uom=line.uom,
             initial_quantity=accepted,
             remaining_quantity=accepted,

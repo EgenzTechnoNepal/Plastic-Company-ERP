@@ -362,7 +362,12 @@ class InventoryReceiptLayer(BaseModel):
     )
     received_at = models.DateTimeField()
     receipt_sequence = models.PositiveBigIntegerField(
-        help_text="Monotonic sequence for FIFO ordering within company/item"
+        help_text="Monotonic unique sequence within company/item"
+    )
+    fifo_rank = models.PositiveBigIntegerField(
+        default=0,
+        db_index=True,
+        help_text="FIFO ordering key; preserved across layer splits",
     )
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, related_name="+")
     initial_quantity = models.DecimalField(max_digits=18, decimal_places=6)
@@ -584,8 +589,11 @@ class LandedCostAllocation(BaseModel):
 
 
 from apps.inventory.ledger import (  # noqa: E402,F401
+    PHYSICAL_TXN_TYPES,
+    STATE_EVENT_TXN_TYPES,
     ReservationStatus,
     StockLedgerEntry,
     StockReservation,
+    StockReservationAllocation,
     StockTxnType,
 )

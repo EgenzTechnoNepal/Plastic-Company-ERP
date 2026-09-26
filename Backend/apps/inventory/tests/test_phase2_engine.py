@@ -157,7 +157,7 @@ class GrnQcLandedFifoE2ETests(Phase2Base):
 
         balances = compute_balances(company=self.company, item=self.item)
         self.assertEqual(balances["qc_hold"], "100.000000")
-        self.assertEqual(balances["available_to_consume"], "0")
+        self.assertEqual(balances["available_to_consume"], "0.000000")
 
         inspection = QCInspection.objects.create(
             company=self.company,

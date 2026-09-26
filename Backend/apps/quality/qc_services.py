@@ -48,7 +48,8 @@ def pass_inspection(*, inspection: QCInspection, user=None) -> QCInspection:
         reference_type="QC_INSPECTION",
         reference_id=inspection.id,
         user=user,
-        reason="QC PASS",
+        reason="QC PASS (state event — no physical quantity change)",
+        is_state_event=True,
     )
 
     inspection.status = QCInspectionStatus.PASSED
@@ -96,7 +97,8 @@ def fail_inspection(
         reference_type="QC_INSPECTION",
         reference_id=inspection.id,
         user=user,
-        reason=f"QC FAIL → {target}",
+        reason=f"QC FAIL → {target} (state event — no physical quantity change)",
+        is_state_event=True,
     )
 
     inspection.status = QCInspectionStatus.FAILED

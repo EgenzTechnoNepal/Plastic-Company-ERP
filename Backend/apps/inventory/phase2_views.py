@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from apps.accounts.permissions import HasModulePermission
 from apps.core.pagination import envelope
 from apps.inventory.landed_post import adjust_landed_cost, post_landed_cost
-from apps.inventory.ledger import StockLedgerEntry, StockReservation
+from apps.inventory.ledger import StockLedgerEntry, StockReservation, StockReservationAllocation
 from apps.inventory.models import Item, LandedCostDocument, UnitOfMeasure
 from apps.inventory.serializers import LandedCostDocumentSerializer
 from apps.inventory.stock_services import (
@@ -41,13 +41,23 @@ class StockLedgerEntrySerializer(serializers.ModelSerializer):
             "reference_id",
             "reason",
             "occurred_at",
+            "is_state_event",
             "created_at",
             "created_by",
         ]
         read_only_fields = fields
 
 
+class StockReservationAllocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StockReservationAllocation
+        fields = ["id", "receipt_layer", "lot", "quantity"]
+        read_only_fields = fields
+
+
 class StockReservationSerializer(serializers.ModelSerializer):
+    allocations = StockReservationAllocationSerializer(many=True, read_only=True)
+
     class Meta:
         model = StockReservation
         fields = [
@@ -63,9 +73,10 @@ class StockReservationSerializer(serializers.ModelSerializer):
             "reference_id",
             "status",
             "notes",
+            "allocations",
             "created_at",
         ]
-        read_only_fields = ["id", "status", "created_at"]
+        read_only_fields = ["id", "status", "allocations", "created_at"]
 
 
 class FifoIssueSerializer(serializers.Serializer):
