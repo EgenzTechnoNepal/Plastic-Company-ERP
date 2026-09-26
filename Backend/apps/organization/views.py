@@ -1,6 +1,7 @@
 from rest_framework import viewsets
 
 from apps.accounts.permissions import HasModulePermission
+from apps.organization.company_scope import CompanyScopedMixin, assert_company_allowed, resolve_company_id
 from apps.organization.models import (
     Branch,
     Company,
@@ -31,19 +32,49 @@ from apps.organization.serializers import (
 )
 
 
-class OrganizationModuleViewSet(viewsets.ModelViewSet):
+class OrganizationModuleViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     """Shared base: every organization master is gated by the 'organization' module."""
 
     permission_classes = [HasModulePermission]
     module_code = "organization"
     search_fields = ["code", "name"]
     ordering_fields = ["code", "name", "created_at"]
+    company_field = "company"
+
+    def perform_create(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data, instance=serializer.instance)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if self.company_field:
+            assert_company_allowed(self.request.user, resolve_company_id(instance, self.company_field))
+        return super(viewsets.ModelViewSet, self).perform_destroy(instance)
 
 
 class CompanyViewSet(OrganizationModuleViewSet):
+    """List/retrieve only companies the user is authorized for."""
+
+    company_field = "id"
     queryset = Company.objects.all()
     serializer_class = CompanySerializer
     search_fields = ["name", "legal_name", "pan_vat_number"]
+
+    def perform_create(self, serializer):
+        # Creating a company is an org-admin action; still require module permission.
+        # New company is not auto-granted to callers — assign UserRole/branch separately.
+        serializer.save()
+
+    def perform_update(self, serializer):
+        assert_company_allowed(self.request.user, serializer.instance.pk)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        assert_company_allowed(self.request.user, instance.pk)
+        return super(viewsets.ModelViewSet, self).perform_destroy(instance)
 
 
 class BranchViewSet(OrganizationModuleViewSet):
@@ -83,12 +114,15 @@ class FiscalYearViewSet(OrganizationModuleViewSet):
 
 
 class FiscalPeriodViewSet(OrganizationModuleViewSet):
+    company_field = "fiscal_year__company"
+    company_from_related = ("fiscal_year",)
     queryset = FiscalPeriod.objects.select_related("fiscal_year").all()
     serializer_class = FiscalPeriodSerializer
     filterset_fields = ["fiscal_year", "status"]
 
 
 class ExchangeRateViewSet(OrganizationModuleViewSet):
+    company_field = None
     queryset = ExchangeRate.objects.all()
     serializer_class = ExchangeRateSerializer
     filterset_fields = ["currency_code"]
@@ -96,6 +130,7 @@ class ExchangeRateViewSet(OrganizationModuleViewSet):
 
 
 class CurrencyViewSet(OrganizationModuleViewSet):
+    company_field = None
     queryset = Currency.objects.all()
     serializer_class = CurrencySerializer
     search_fields = ["code", "name"]

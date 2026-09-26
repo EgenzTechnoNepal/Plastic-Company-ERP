@@ -31,6 +31,7 @@ from apps.inventory.serializers import (
     UomConversionSerializer,
 )
 from apps.inventory.services import convert_quantity, preview_landed_cost, transition_lot_status
+from apps.organization.company_scope import CompanyScopedMixin
 
 ENTITIES = [
     ("products", "products"),
@@ -65,26 +66,33 @@ class BatchViewSet(VIEWSETS["batches"]):
 VIEWSETS["batches"] = BatchViewSet
 
 
-class InventoryMasterViewSet(viewsets.ModelViewSet):
+class InventoryMasterViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     permission_classes = [HasModulePermission]
     module_code = MODULE_CODE
     search_fields = ["code", "name"]
     ordering_fields = ["created_at"]
+    company_field = "company"
 
     def perform_create(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data)
         serializer.save(created_by=self.request.user, updated_by=self.request.user)
 
     def perform_update(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data, instance=serializer.instance)
         serializer.save(updated_by=self.request.user)
 
     def perform_destroy(self, instance):
-        # Soft-deactivate masters — never hard-delete with history risk
+        if self.company_field:
+            from apps.organization.company_scope import assert_company_allowed, resolve_company_id
+
+            assert_company_allowed(self.request.user, resolve_company_id(instance, self.company_field))
         instance.is_active = False
         instance.updated_by = self.request.user
         instance.save(update_fields=["is_active", "updated_by", "updated_at"])
 
 
 class UnitOfMeasureViewSet(InventoryMasterViewSet):
+    company_field = None
     queryset = UnitOfMeasure.objects.all()
     serializer_class = UnitOfMeasureSerializer
     search_fields = ["code", "name", "symbol"]
@@ -92,6 +100,7 @@ class UnitOfMeasureViewSet(InventoryMasterViewSet):
 
 
 class UomConversionViewSet(InventoryMasterViewSet):
+    company_field = None
     queryset = UomConversion.objects.select_related("from_uom", "to_uom").all()
     serializer_class = UomConversionSerializer
     filterset_fields = ["from_uom", "to_uom"]
@@ -126,6 +135,8 @@ class ItemViewSet(InventoryMasterViewSet):
 
 
 class ItemUomViewSet(InventoryMasterViewSet):
+    company_field = "item__company"
+    company_from_related = ("item",)
     queryset = ItemUom.objects.select_related("item", "uom").all()
     serializer_class = ItemUomSerializer
     filterset_fields = ["item", "uom"]
@@ -133,6 +144,8 @@ class ItemUomViewSet(InventoryMasterViewSet):
 
 
 class SupplierItemPriceViewSet(InventoryMasterViewSet):
+    company_field = "item__company"
+    company_from_related = ("item", "supplier")
     queryset = SupplierItemPrice.objects.select_related("item", "supplier", "uom", "currency").all()
     serializer_class = SupplierItemPriceSerializer
     filterset_fields = ["item", "supplier", "is_active"]
@@ -147,6 +160,7 @@ class InventoryLotViewSet(InventoryMasterViewSet):
     ordering_fields = ["lot_number", "received_date", "created_at"]
 
     def perform_create(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data)
         data = serializer.validated_data
         if data.get("remaining_quantity") is None and data.get("initial_quantity") is not None:
             serializer.save(
@@ -155,7 +169,7 @@ class InventoryLotViewSet(InventoryMasterViewSet):
                 updated_by=self.request.user,
             )
         else:
-            super().perform_create(serializer)
+            serializer.save(created_by=self.request.user, updated_by=self.request.user)
 
     @action(detail=True, methods=["post"], url_path="transition")
     def transition(self, request, pk=None):
@@ -183,6 +197,7 @@ class LandedCostDocumentViewSet(InventoryMasterViewSet):
     search_fields = ["document_number", "reference"]
 
     def perform_create(self, serializer):
+        self._assert_validated_company_access(serializer.validated_data)
         data = serializer.validated_data
         qty = data.get("purchase_quantity") or 0
         unit = data.get("purchase_unit_cost") or 0
@@ -197,12 +212,15 @@ class LandedCostDocumentViewSet(InventoryMasterViewSet):
 
     @action(detail=True, methods=["post"], url_path="preview")
     def preview(self, request, pk=None):
+        # get_object() enforces queryset + object company checks — preview never posts stock/GL
         document = self.get_object()
         result = preview_landed_cost(document)
         return envelope(result)
 
 
 class LandedCostComponentViewSet(InventoryMasterViewSet):
+    company_field = "document__company"
+    company_from_related = ("document", "supplier")
     queryset = LandedCostComponent.objects.select_related("document", "currency", "supplier").all()
     serializer_class = LandedCostComponentSerializer
     filterset_fields = ["document", "category", "allocation_basis", "is_active"]
@@ -210,6 +228,8 @@ class LandedCostComponentViewSet(InventoryMasterViewSet):
 
 
 class LandedCostAllocationViewSet(InventoryMasterViewSet):
+    company_field = "document__company"
+    company_from_related = ("document", "lot", "item")
     queryset = LandedCostAllocation.objects.select_related("document", "component", "lot", "item").all()
     serializer_class = LandedCostAllocationSerializer
     filterset_fields = ["document", "component", "lot", "item", "allocation_basis"]
