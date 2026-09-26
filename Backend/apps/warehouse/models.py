@@ -95,3 +95,13 @@ class Bin(BaseModel):
 
     def __str__(self):
         return f"{self.warehouse.code}/{self.code}"
+
+
+from apps.warehouse.operations import (  # noqa: E402,F401
+    CycleCountLine,
+    CycleCountSession,
+    OpsDocStatus,
+    PutawayOrder,
+    StockAdjustment,
+    StockTransfer,
+)

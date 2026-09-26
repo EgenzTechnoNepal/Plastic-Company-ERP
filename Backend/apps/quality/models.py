@@ -1,4 +1,5 @@
 from apps.core.documents import DomainRecord
+from apps.quality.qc import QCFailDisposition, QCInspection, QCInspectionStatus  # noqa: F401
 
 
 class Record(DomainRecord):

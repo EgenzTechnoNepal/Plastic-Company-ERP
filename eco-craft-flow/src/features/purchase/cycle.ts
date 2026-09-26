@@ -264,18 +264,10 @@ export async function inspectGrn(grn: ErpRecord, result: "Passed" | "Failed"): P
   const qty = grn.lines.reduce((s, l) => s + l.qty, 0);
   const accepted = result === "Passed" ? qty : 0;
   const rejected = result === "Passed" ? 0 : qty;
+  // Phase 2: do NOT mutate products.onHand or DomainRecord stock_movements here.
+  // Authoritative stock is typed GRN post → QC_HOLD → QC pass/fail → StockLedger / FIFO.
+  // Use PHASE2_TYPED_API (services/api/phase2.ts) for posting; this path only updates UI metadata.
   if (result === "Passed") {
-    for (const l of grn.lines) {
-      const p = byCode("products", l.item);
-      if (!p) continue;
-      const stocked = await getService("products").update(p.id, { fields: { ...p.fields, onHand: num(p, "onHand") + l.qty } });
-      await notifyRecoveredAlerts(stocked);
-      await getService("stock_movements").create({
-        title: `Receipt — ${l.item}`,
-        status: "completed",
-        fields: { type: "Receipt", product: l.item, qty: l.qty, warehouse: str(grn, "warehouse") || "WH-RM", reference: grn.code },
-      });
-    }
     const first = grn.lines[0];
     if (first) {
       await getService("qc_inspections").create({

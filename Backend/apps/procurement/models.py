@@ -16,6 +16,7 @@ class Record(DomainRecord):
 class IncotermCode(models.TextChoices):
     EXW = "EXW", "Ex Works"
     FCA = "FCA", "Free Carrier"
+    FAS = "FAS", "Free Alongside Ship"
     FOB = "FOB", "Free On Board"
     CFR = "CFR", "Cost and Freight"
     CIF = "CIF", "Cost, Insurance and Freight"
@@ -119,3 +120,15 @@ class SupplierDocument(BaseModel):
 
     def __str__(self):
         return f"{self.supplier.code}: {self.title}"
+
+
+# Phase 2 inbound documents (must import so Django registers models)
+from apps.procurement.inbound import (  # noqa: E402,F401
+    GATE_ENTRY_TRANSITIONS,
+    GateEntry,
+    GateEntryStatus,
+    GoodsReceiptLine,
+    GoodsReceiptNote,
+    GrnStatus,
+    ImportShipment,
+)

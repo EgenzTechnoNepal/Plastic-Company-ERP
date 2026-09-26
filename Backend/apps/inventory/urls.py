@@ -18,4 +18,11 @@ router.register("landed-cost-documents", views.LandedCostDocumentViewSet, basena
 router.register("landed-cost-components", views.LandedCostComponentViewSet, basename="landed-cost-component")
 router.register("landed-cost-allocations", views.LandedCostAllocationViewSet, basename="landed-cost-allocation")
 
+from apps.inventory import phase2_views
+
+router.register("stock-ledger", phase2_views.StockLedgerViewSet, basename="stock-ledger")
+router.register("balances", phase2_views.InventoryBalanceViewSet, basename="inventory-balance")
+router.register("fifo-issue", phase2_views.FifoIssueViewSet, basename="fifo-issue")
+router.register("reservations", phase2_views.StockReservationViewSet, basename="stock-reservation")
+
 urlpatterns = router.urls

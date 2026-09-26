@@ -69,6 +69,8 @@ def resolve_company_id(obj, company_field: str = "company") -> UUID | None:
 
 
 def assert_company_allowed(user, company_id, *, message: str | None = None) -> None:
+    if user is None:
+        return
     allowed = user_allowed_company_ids(user)
     if allowed is None:
         return

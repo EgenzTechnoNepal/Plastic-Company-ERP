@@ -258,8 +258,15 @@ class InventoryLot(BaseModel):
     expiry_date = models.DateField(null=True, blank=True)
     received_date = models.DateField(null=True, blank=True)
 
-    # Phase 2 will replace string refs with typed FKs; keep opaque refs for now
+    # Opaque string refs kept for compatibility; typed GRN is authoritative when set
     source_grn_reference = models.CharField(max_length=80, blank=True)
+    source_grn = models.ForeignKey(
+        "procurement.GoodsReceiptNote",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lots",
+    )
     purchase_reference = models.CharField(max_length=80, blank=True)
     genealogy_reference = models.CharField(max_length=120, blank=True)
     certificate_coa_reference = models.CharField(max_length=120, blank=True)
@@ -436,7 +443,7 @@ class AllocationBasis(models.TextChoices):
 class LandedCostDocumentStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     PREVIEWED = "PREVIEWED", "Previewed"
-    # POSTED reserved for Phase 2
+    POSTED = "POSTED", "Posted"
     CANCELLED = "CANCELLED", "Cancelled"
 
 
@@ -466,6 +473,14 @@ class LandedCostDocument(BaseModel):
     purchase_unit_cost = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     purchase_value = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
     notes = models.TextField(blank=True)
+    posted_at = models.DateTimeField(null=True, blank=True)
+    posted_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
 
     class Meta(BaseModel.Meta):
         constraints = [
@@ -566,3 +581,11 @@ class LandedCostAllocation(BaseModel):
 
     def __str__(self):
         return f"Alloc {self.allocated_amount} ({self.allocation_basis})"
+
+
+from apps.inventory.ledger import (  # noqa: E402,F401
+    ReservationStatus,
+    StockLedgerEntry,
+    StockReservation,
+    StockTxnType,
+)

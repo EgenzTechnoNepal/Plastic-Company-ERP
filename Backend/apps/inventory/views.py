@@ -217,6 +217,20 @@ class LandedCostDocumentViewSet(InventoryMasterViewSet):
         result = preview_landed_cost(document)
         return envelope(result)
 
+    @action(detail=True, methods=["post"], url_path="post")
+    def post_document(self, request, pk=None):
+        from apps.inventory.landed_post import post_landed_cost
+
+        document = self.get_object()
+        return envelope(post_landed_cost(document=document, user=request.user))
+
+    @action(detail=True, methods=["post"], url_path="adjust")
+    def adjust_document(self, request, pk=None):
+        from apps.inventory.landed_post import adjust_landed_cost
+
+        document = self.get_object()
+        return envelope(adjust_landed_cost(document=document, user=request.user))
+
 
 class LandedCostComponentViewSet(InventoryMasterViewSet):
     company_field = "document__company"
