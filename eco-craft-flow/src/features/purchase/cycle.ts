@@ -4,6 +4,7 @@ import { db } from "@/services/mock/db";
 import { isLowStock, num, str } from "@/lib/records";
 import { notifyRecoveredAlerts } from "@/features/inventory/cycle";
 import { findWarehousePlan, reorderQty } from "@/features/inventory/planning";
+import { matchSupplierBill } from "@/services/api/phase3";
 import type { ErpRecord, LineItem } from "@/types/erp";
 
 export const MATCH_TOLERANCE_PCT = 2;
@@ -53,6 +54,10 @@ function lineValue(l: LineItem) {
   return gross * (1 - (l.discountPct ?? 0) / 100) * (1 + (l.taxPct ?? 0) / 100);
 }
 
+/**
+ * Client-side 3-way match preview only — NOT authoritative.
+ * Use matchSupplierBill() / PHASE3_TYPED_API.supplierBillMatch for real match status.
+ */
 export function threeWayMatch(bill: ErpRecord) {
   const po = byCode("purchase_orders", str(bill, "purchaseOrder"));
   const grn = byCode("grns", str(bill, "grn"));
@@ -77,7 +82,10 @@ export function threeWayMatch(bill: ErpRecord) {
     grnQty,
     billAmt,
     poAmt,
-    message: exceptions.length ? exceptions.join("; ") : "3-way matched within tolerance",
+    advisory: true as const,
+    message: exceptions.length
+      ? `Preview: ${exceptions.join("; ")}`
+      : "Preview: 3-way matched within tolerance (server match is authoritative)",
   };
 }
 
@@ -322,14 +330,27 @@ export async function createBillFromGrn(grn: ErpRecord): Promise<ErpRecord> {
     },
     lines,
   });
-  const match = threeWayMatch(bill);
+  // Do not treat client threeWayMatch as authority — leave Pending until server match.
+  const typedBillId = str(bill, "typedBillId");
+  let matchStatus = "Pending";
+  let matchNote = "Awaiting server 3-way match (PHASE3_TYPED_API.supplierBillMatch)";
+  if (typedBillId) {
+    try {
+      const matched = await matchSupplierBill(typedBillId);
+      matchStatus = matched.match_status;
+      matchNote = matched.match_exceptions || matched.match_status;
+    } catch {
+      matchStatus = "Pending";
+      matchNote = "Server match unavailable; client preview is not authoritative";
+    }
+  }
   await getService("purchase_bills").update(bill.id, {
-    fields: { ...bill.fields, matchStatus: match.ok ? "3-Way Matched" : "Exception", matchNote: match.message },
+    fields: { ...bill.fields, matchStatus, matchNote },
   });
   await getService("grns").update(grn.id, { fields: { ...grn.fields, bill: bill.code } });
   if (po) await getService("purchase_orders").update(po.id, { fields: { ...po.fields, billStatus: "Billed" } });
   await linkBoth(grn, bill);
-  logAudit({ action: "convert", module: "purchase", entity: "grns", recordId: grn.id, recordCode: grn.code, after: { bill: bill.code, match: match.message } });
+  logAudit({ action: "convert", module: "purchase", entity: "grns", recordId: grn.id, recordCode: grn.code, after: { bill: bill.code, match: matchNote } });
   const fresh = byCode("purchase_bills", bill.code) ?? bill;
   return fresh;
 }
@@ -403,11 +424,19 @@ export async function convertOcrToBill(scan: ErpRecord): Promise<ErpRecord> {
     },
     lines: cloneLines(po?.lines ?? grn?.lines ?? []),
   });
-  const match = threeWayMatch(bill);
+  // OCR path stays DomainRecord; match status is Pending until typed bill + server match.
+  const preview = threeWayMatch(bill);
   await getService("purchase_bills").update(bill.id, {
-    fields: { ...bill.fields, matchStatus: match.ok ? "3-Way Matched" : "Exception", matchNote: match.message },
+    fields: {
+      ...bill.fields,
+      matchStatus: "Pending",
+      matchNote: `Client preview only: ${preview.message}`,
+    },
   });
-  await getService("ocr_bills").update(scan.id, { status: "completed", fields: { ...scan.fields, matchStatus: match.ok ? "Matched" : "Exception" } });
+  await getService("ocr_bills").update(scan.id, {
+    status: "completed",
+    fields: { ...scan.fields, matchStatus: "Pending (server match required)" },
+  });
   await linkBoth(scan, bill);
   logAudit({
     action: "convert",

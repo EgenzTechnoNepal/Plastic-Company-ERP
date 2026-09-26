@@ -14,8 +14,13 @@ export function ThreeWayMatchPanel({ bill }: { bill: ErpRecord }) {
         <CardTitle className="text-base">3-way match · PO + GRN + bill</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
+        <p className="text-xs text-muted-foreground">
+          Client preview only — server <code className="text-[10px]">supplier-bills/&#123;id&#125;/match/</code> is authoritative.
+        </p>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge tone={match.ok ? "success" : "danger"}>{match.ok ? "Matched" : "Exception"}</StatusBadge>
+          <StatusBadge tone={match.ok ? "success" : "danger"}>
+            {match.ok ? "Preview matched" : "Preview exception"}
+          </StatusBadge>
           <span className="text-xs text-muted-foreground">Tolerance ±{MATCH_TOLERANCE_PCT}% qty / value</span>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">

@@ -132,3 +132,14 @@ from apps.procurement.inbound import (  # noqa: E402,F401
     GrnStatus,
     ImportShipment,
 )
+
+# Phase 3 Slice A commercial documents
+from apps.procurement.commercial import (  # noqa: E402,F401
+    PurchaseOrder,
+    PurchaseOrderLine,
+    PurchaseOrderStatus,
+    SupplierBill,
+    SupplierBillLine,
+    SupplierBillMatchStatus,
+    SupplierBillStatus,
+)

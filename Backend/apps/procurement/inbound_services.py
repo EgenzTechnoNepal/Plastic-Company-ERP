@@ -7,6 +7,7 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
+from apps.core.phase3_policy import REQUIRE_PO_ON_GRN
 from apps.core.events import GRN_POSTED, emit
 from apps.core.exceptions import ERPError, InvalidStatusTransitionError
 from apps.inventory.models import InventoryLot, InventoryReceiptLayer, LotStatus
@@ -79,7 +80,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     assert_related_same_company(grn.company_id, "warehouse", grn.warehouse)
 
     now = timezone.now()
-    for line in grn.lines.select_related("item", "uom").all():
+    for line in grn.lines.select_related("item", "uom", "purchase_order_line").all():
         qty = _as_decimal(line.received_quantity)
         if qty <= 0:
             raise InboundError("Received quantity must be positive.")
@@ -87,6 +88,20 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
         if accepted <= 0:
             continue
         assert_related_same_company(grn.company_id, "item", line.item)
+
+        # Pre-validate PO over-receipt before creating stock
+        if line.purchase_order_line_id:
+            from apps.core.phase3_policy import over_receipt_allowed
+            from apps.procurement.commercial import PurchaseOrderLine
+
+            pol = PurchaseOrderLine.objects.select_for_update().get(pk=line.purchase_order_line_id)
+            if not over_receipt_allowed(pol.ordered_quantity, pol.received_quantity, accepted):
+                raise InboundError(
+                    "Over-receipt exceeds configured tolerance.",
+                    code="OVER_RECEIPT",
+                )
+        elif REQUIRE_PO_ON_GRN:
+            raise InboundError("PO line is required on GRN lines.", code="PO_REQUIRED")
 
         lot_number = line.lot_number or f"{grn.grn_number}-{line.item.sku}"
         initial_status = LotStatus.QC_HOLD if line.item.qc_required else LotStatus.AVAILABLE
@@ -161,6 +176,15 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             reason=f"GRN {grn.grn_number}",
             occurred_at=grn.received_at or now,
         )
+
+        if line.purchase_order_line_id:
+            from apps.procurement.po_services import apply_po_receipt_progress
+
+            apply_po_receipt_progress(
+                purchase_order_line=line.purchase_order_line,
+                accepted_qty=accepted,
+                user=user,
+            )
 
     if grn.gate_entry_id:
         gate = GateEntry.objects.select_for_update().get(pk=grn.gate_entry_id)

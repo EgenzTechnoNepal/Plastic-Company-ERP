@@ -2,6 +2,9 @@ import { getService } from "@/services/catalog";
 import { logAudit, newLineId, notify, recordTotal } from "@/services/entityService";
 import { db } from "@/services/mock/db";
 import { num, str } from "@/lib/records";
+import { confirmSalesOrder } from "@/services/api/phase3";
+import { PHASE2_TYPED_API } from "@/services/api/phase2";
+import { apiFetch } from "@/services/api/client";
 import type { ErpRecord, LineItem } from "@/types/erp";
 
 export const DISCOUNT_THRESHOLD_PCT = 10;
@@ -35,22 +38,62 @@ export function creditCheck(customer: ErpRecord | undefined, extra: number) {
   return { ok: true, message: "Within credit limit", limit, outstanding, next };
 }
 
+/**
+ * Advisory UI stock check only.
+ * Authoritative ATC is server `/inventory/balances/` + reserve_stock on SO confirm.
+ * DomainRecord products.reserved is NOT reservation truth.
+ */
 export function stockCheck(lines: LineItem[]) {
   const products = db.get().records.products ?? [];
   const shortages: Array<{ item: string; need: number; free: number }> = [];
   for (const l of lines) {
     if (!l.item || !l.qty) continue;
     const p = products.find((x) => x.code === l.item);
-    const free = p ? Math.max(0, num(p, "onHand") - num(p, "reserved")) : 0;
+    // Prefer onHand as a soft preview; do not treat products.reserved as authority.
+    const free = p ? Math.max(0, num(p, "onHand")) : 0;
     if (l.qty > free) shortages.push({ item: l.item || l.description || "item", need: l.qty, free });
   }
   return {
     ok: shortages.length === 0,
     shortages,
     message: shortages.length
-      ? `Insufficient free stock: ${shortages.map((s) => `${s.item} need ${s.need}, free ${s.free}`).join("; ")}.`
-      : "Free stock available",
+      ? `Insufficient free stock (UI preview): ${shortages.map((s) => `${s.item} need ${s.need}, free ${s.free}`).join("; ")}.`
+      : "Free stock available (UI preview — confirm via typed SO)",
   };
+}
+
+/** Prefer typed balances when the API is reachable. */
+export async function stockCheckViaBalances(
+  lines: LineItem[],
+  companyId?: string,
+): Promise<ReturnType<typeof stockCheck>> {
+  try {
+    const rows = await apiFetch<Array<{ item_sku?: string; sku?: string; available_to_consume?: string; available?: string }>>(
+      PHASE2_TYPED_API.balances,
+      { query: companyId ? { company: companyId } : undefined, silent: true },
+    );
+    const bySku = new Map(
+      (Array.isArray(rows) ? rows : []).map((r) => [
+        String(r.item_sku ?? r.sku ?? ""),
+        Number(r.available_to_consume ?? r.available ?? 0),
+      ]),
+    );
+    const shortages: Array<{ item: string; need: number; free: number }> = [];
+    for (const l of lines) {
+      if (!l.item || !l.qty) continue;
+      const free = bySku.get(l.item) ?? 0;
+      if (l.qty > free) shortages.push({ item: l.item, need: l.qty, free });
+    }
+    return {
+      ok: shortages.length === 0,
+      shortages,
+      message: shortages.length
+        ? `Insufficient ATC: ${shortages.map((s) => `${s.item} need ${s.need}, free ${s.free}`).join("; ")}.`
+        : "ATC available",
+    };
+  } catch {
+    return stockCheck(lines);
+  }
 }
 
 function customerByCode(code: string) {
@@ -172,24 +215,43 @@ export async function convertQuotationToOrder(qt: ErpRecord): Promise<ErpRecord>
 export async function fulfillSalesOrder(so: ErpRecord, step: "allocate" | "pick" | "pack"): Promise<ErpRecord> {
   const fields = { ...so.fields };
   if (step === "allocate") {
-    if (so.status !== "approved" && so.status !== "in_progress") {
+    if (so.status !== "approved" && so.status !== "in_progress" && so.status !== "draft") {
       throw new Error("Approve the sales order before allocating stock.");
     }
     const customer = customerByCode(str(so, "customer"));
     const credit = creditCheck(customer, recordTotal(so));
-    if (!credit.ok) throw new Error(credit.message);
-    const stock = stockCheck(so.lines);
-    if (!stock.ok) throw new Error(stock.message);
-    const products = db.get().records.products ?? [];
-    for (const l of so.lines) {
-      const p = products.find((x) => x.code === l.item);
-      if (!p) continue;
-      await getService("products").update(p.id, { fields: { ...p.fields, reserved: num(p, "reserved") + l.qty } });
+    // Credit: warning only in UI; server confirm may warn or hard-block per policy.
+    if (!credit.ok) {
+      fields.creditWarning = credit.message;
     }
-    fields.allocationStatus = "Allocated";
+    const typedId = str(so, "typedSalesOrderId") || str(so, "typedId");
+    if (typedId) {
+      // Authoritative path: server confirm → reserve_stock + StockReservationAllocation.
+      const confirmed = await confirmSalesOrder(typedId);
+      fields.allocationStatus = "Allocated";
+      fields.typedStatus = confirmed.status;
+      fields.reservedVia = "typed_confirm";
+    } else {
+      // Offline / DomainRecord preview only — do NOT write products.reserved (not authority).
+      const stock = await stockCheckViaBalances(so.lines);
+      if (!stock.ok) throw new Error(stock.message);
+      fields.allocationStatus = "Allocated (preview)";
+      fields.reservedVia = "ui_preview_only";
+      notify({
+        type: "system",
+        priority: "normal",
+        title: `${so.code} allocation preview`,
+        body: "Stock reservation requires typed SO confirm on the server. DomainRecord products.reserved is not updated.",
+        module: "sales",
+        link: { entity: "sales_orders", id: so.id },
+      });
+    }
   }
   if (step === "pick") {
-    if (str(so, "allocationStatus") !== "Allocated") throw new Error("Allocate stock before picking.");
+    const alloc = str(so, "allocationStatus");
+    if (alloc !== "Allocated" && alloc !== "Allocated (preview)") {
+      throw new Error("Allocate stock before picking.");
+    }
     fields.pickStatus = "Picked";
   }
   if (step === "pack") {

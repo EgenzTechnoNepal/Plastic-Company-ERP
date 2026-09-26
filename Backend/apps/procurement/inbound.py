@@ -47,6 +47,13 @@ class ImportShipment(BaseModel):
     )
     named_place = models.CharField(max_length=200, blank=True)
     purchase_reference = models.CharField(max_length=80, blank=True)
+    purchase_order = models.ForeignKey(
+        "procurement.PurchaseOrder",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="import_shipments",
+    )
     etd = models.DateField(null=True, blank=True)
     eta = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
@@ -81,6 +88,13 @@ class GateEntry(BaseModel):
         related_name="gate_entries",
     )
     purchase_reference = models.CharField(max_length=80, blank=True)
+    purchase_order = models.ForeignKey(
+        "procurement.PurchaseOrder",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="gate_entries",
+    )
     vehicle_number = models.CharField(max_length=60, blank=True)
     driver_name = models.CharField(max_length=120, blank=True)
     material_reference = models.CharField(max_length=200, blank=True)
@@ -189,6 +203,13 @@ class GoodsReceiptLine(BaseModel):
     )
     receipt_layer = models.ForeignKey(
         "inventory.InventoryReceiptLayer",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="grn_lines",
+    )
+    purchase_order_line = models.ForeignKey(
+        "procurement.PurchaseOrderLine",
         null=True,
         blank=True,
         on_delete=models.PROTECT,

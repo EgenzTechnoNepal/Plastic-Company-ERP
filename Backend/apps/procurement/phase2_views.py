@@ -27,6 +27,7 @@ class ImportShipmentSerializer(serializers.ModelSerializer):
             "incoterm",
             "named_place",
             "purchase_reference",
+            "purchase_order",
             "etd",
             "eta",
             "notes",
@@ -47,6 +48,7 @@ class GateEntrySerializer(serializers.ModelSerializer):
             "supplier",
             "shipment",
             "purchase_reference",
+            "purchase_order",
             "vehicle_number",
             "driver_name",
             "material_reference",
@@ -79,6 +81,7 @@ class GoodsReceiptLineSerializer(serializers.ModelSerializer):
             "expiry_date",
             "lot",
             "receipt_layer",
+            "purchase_order_line",
             "line_notes",
         ]
         read_only_fields = ["id", "lot", "receipt_layer"]
