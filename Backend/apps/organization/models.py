@@ -146,3 +146,63 @@ class ExchangeRate(BaseModel):
 
     def __str__(self):
         return f"{self.currency_code} @ {self.as_of_date} = {self.rate_to_base}"
+
+
+class Currency(BaseModel):
+    """ISO currency master — rates live on ExchangeRate; do not hard-code FX here."""
+
+    code = models.CharField(max_length=3, unique=True)
+    name = models.CharField(max_length=100)
+    symbol = models.CharField(max_length=8, blank=True)
+    decimal_places = models.PositiveSmallIntegerField(default=2)
+
+    class Meta(BaseModel.Meta):
+        verbose_name_plural = "Currencies"
+        ordering = ["code"]
+
+    def __str__(self):
+        return self.code
+
+
+class TaxCategory(BaseModel):
+    """Configurable tax category (e.g. standard VAT). Rates are not hard-coded Nepal defaults."""
+
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="tax_categories")
+    code = models.CharField(max_length=30)
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True)
+
+    class Meta(BaseModel.Meta):
+        verbose_name_plural = "Tax categories"
+        constraints = [
+            models.UniqueConstraint(fields=["company", "code"], name="uq_taxcategory_company_code")
+        ]
+
+    def __str__(self):
+        return f"{self.code} — {self.name}"
+
+
+class TaxApplication(models.TextChoices):
+    EXCLUSIVE = "exclusive", "Tax exclusive"
+    INCLUSIVE = "inclusive", "Tax inclusive"
+
+
+class TaxRate(BaseModel):
+    company = models.ForeignKey(Company, on_delete=models.PROTECT, related_name="tax_rates")
+    tax_category = models.ForeignKey(TaxCategory, on_delete=models.PROTECT, related_name="rates")
+    name = models.CharField(max_length=100)
+    rate_percent = models.DecimalField(max_digits=8, decimal_places=4)
+    application = models.CharField(
+        max_length=20, choices=TaxApplication.choices, default=TaxApplication.EXCLUSIVE
+    )
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+
+    class Meta(BaseModel.Meta):
+        ordering = ["-effective_from"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(rate_percent__gte=0), name="ck_taxrate_non_negative"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.rate_percent}%)"

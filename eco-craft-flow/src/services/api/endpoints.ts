@@ -79,6 +79,23 @@ export const ENDPOINTS: Record<string, ResourceEndpoints> = {
   stock_movements: resource("inventory", "movements"),
   stock_adjustments: resource("inventory", "adjustments"),
 
+  // Phase 1 typed masters (DomainRecord paths above remain for existing screens)
+  items: resource("inventory", "items"),
+  uoms: resource("inventory", "uoms"),
+  uom_conversions: resource("inventory", "uom-conversions"),
+  inventory_lots: resource("inventory", "lots"),
+  receipt_layers: resource("inventory", "receipt-layers"),
+  landed_cost_documents: resource("inventory", "landed-cost-documents"),
+  landed_cost_components: resource("inventory", "landed-cost-components"),
+  supplier_item_prices: resource("inventory", "supplier-item-prices"),
+  vendors: resource("purchase", "vendors"),
+  incoterms: resource("purchase", "incoterms"),
+  facilities: resource("warehouse", "facilities"),
+  zones: resource("warehouse", "zones"),
+  racks: resource("warehouse", "racks"),
+  storage_bins: resource("warehouse", "storage-bins"),
+  customer_masters: resource("crm", "customer-masters"),
+
   warehouses: resource("warehouse", "warehouses"),
   bins: resource("warehouse", "bins"),
   stock_transfers: resource("warehouse", "transfers"),

@@ -6,4 +6,6 @@ router = DefaultRouter()
 for entity, slug in views.ENTITIES:
     router.register(slug, views.VIEWSETS[entity], basename=slug)
 
+router.register("customer-masters", views.CustomerMasterViewSet, basename="customer-master")
+
 urlpatterns = router.urls

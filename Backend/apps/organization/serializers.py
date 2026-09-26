@@ -4,12 +4,15 @@ from apps.organization.models import (
     Branch,
     Company,
     CostCentre,
+    Currency,
     Department,
     ExchangeRate,
     FiscalPeriod,
     FiscalYear,
     Project,
     ProfitCentre,
+    TaxCategory,
+    TaxRate,
 )
 
 
@@ -67,4 +70,56 @@ class FiscalPeriodSerializer(serializers.ModelSerializer):
 class ExchangeRateSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExchangeRate
-        fields = ["id", "currency_code", "rate_to_base", "as_of_date"]
+        fields = ["id", "currency_code", "rate_to_base", "as_of_date", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class CurrencySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Currency
+        fields = [
+            "id",
+            "code",
+            "name",
+            "symbol",
+            "decimal_places",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class TaxCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaxCategory
+        fields = [
+            "id",
+            "company",
+            "code",
+            "name",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class TaxRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TaxRate
+        fields = [
+            "id",
+            "company",
+            "tax_category",
+            "name",
+            "rate_percent",
+            "application",
+            "effective_from",
+            "effective_to",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
