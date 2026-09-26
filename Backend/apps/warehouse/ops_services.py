@@ -180,9 +180,16 @@ def post_putaway(*, putaway: PutawayOrder, user=None) -> PutawayOrder:
 
 @transaction.atomic
 def post_transfer(*, transfer: StockTransfer, user=None) -> StockTransfer:
-    transfer = StockTransfer.objects.select_for_update().select_related("lot", "item", "company").get(
-        pk=transfer.pk
-    )
+    transfer = StockTransfer.objects.select_for_update().select_related(
+        "lot",
+        "item",
+        "company",
+        "from_warehouse",
+        "from_bin",
+        "to_warehouse",
+        "to_bin",
+        "to_bin__warehouse",
+    ).get(pk=transfer.pk)
     assert_company_allowed(user, transfer.company_id)
     if transfer.status == OpsDocStatus.POSTED:
         raise WarehouseOpsError("Transfer already posted.", code="DUPLICATE_POST")
@@ -197,6 +204,11 @@ def post_transfer(*, transfer: StockTransfer, user=None) -> StockTransfer:
         from_bin=transfer.from_bin,
         to_bin=transfer.to_bin,
     )
+    if transfer.to_bin.warehouse_id != transfer.to_warehouse_id:
+        raise WarehouseOpsError(
+            "Destination bin does not belong to destination warehouse.",
+            code="DEST_BIN_WAREHOUSE_MISMATCH",
+        )
     if lot.status != LotStatus.AVAILABLE:
         raise WarehouseOpsError("Only AVAILABLE lots can be transferred.", code="INVALID_STATUS")
     if lot.status in {LotStatus.QC_HOLD, LotStatus.QUARANTINED, LotStatus.REJECTED}:

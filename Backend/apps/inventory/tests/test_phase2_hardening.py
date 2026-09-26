@@ -46,7 +46,7 @@ from apps.procurement.models import Incoterm, Supplier
 from apps.quality.qc import QCInspection
 from apps.quality.qc_services import pass_inspection
 from apps.warehouse.models import Bin, BinType, Warehouse
-from apps.warehouse.operations import PutawayOrder, StockAdjustment, StockTransfer
+from apps.warehouse.operations import OpsDocStatus, PutawayOrder, StockAdjustment, StockTransfer
 from apps.warehouse.ops_services import WarehouseOpsError, post_adjustment, post_putaway, post_transfer
 
 
@@ -457,6 +457,55 @@ class TransferHardeningTests(HardeningBase):
         )
         with self.assertRaises(CompanyAccessDenied):
             post_transfer(transfer=xfer, user=self.user)
+
+    def test_transfer_dest_bin_warehouse_mismatch_rejected(self):
+        lot = self._ready_at_rm(20, "TDB")
+        layer_before = list(
+            InventoryReceiptLayer.objects.filter(lot=lot).values(
+                "id", "remaining_quantity", "warehouse_id", "bin_id"
+            )
+        )
+        ledger_before = StockLedgerEntry.objects.filter(
+            txn_type__in=[StockTxnType.TRANSFER_OUT, StockTxnType.TRANSFER_IN]
+        ).count()
+
+        # Same company: Warehouse B destination claim, but bin belongs to Warehouse C (other WH)
+        wh_b = Warehouse.objects.create(company=self.company, code="WH-B-DEST", name="Dest B")
+        wh_c = Warehouse.objects.create(company=self.company, code="WH-C-BIN", name="Bin Owner C")
+        bin_on_c = Bin.objects.create(warehouse=wh_c, code="BIN-C", bin_type=BinType.RAW_MATERIAL)
+
+        xfer = StockTransfer.objects.create(
+            company=self.company,
+            transfer_number="TR-DEST-MIS",
+            item=self.item,
+            lot=lot,
+            quantity=Decimal("5"),
+            uom=self.kg,
+            from_warehouse=self.warehouse,
+            from_bin=self.bin_rm,
+            to_warehouse=wh_b,
+            to_bin=bin_on_c,
+        )
+        with self.assertRaises(WarehouseOpsError) as ctx:
+            post_transfer(transfer=xfer, user=self.user)
+        self.assertEqual(ctx.exception.code, "DEST_BIN_WAREHOUSE_MISMATCH")
+
+        xfer.refresh_from_db()
+        self.assertEqual(xfer.status, OpsDocStatus.DRAFT)
+        self.assertIsNone(xfer.posted_at)
+
+        layer_after = list(
+            InventoryReceiptLayer.objects.filter(lot=lot).values(
+                "id", "remaining_quantity", "warehouse_id", "bin_id"
+            )
+        )
+        self.assertEqual(layer_after, layer_before)
+        self.assertEqual(
+            StockLedgerEntry.objects.filter(
+                txn_type__in=[StockTxnType.TRANSFER_OUT, StockTxnType.TRANSFER_IN]
+            ).count(),
+            ledger_before,
+        )
 
 
 class AdjustmentHardeningTests(HardeningBase):
