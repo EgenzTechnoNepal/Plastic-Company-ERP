@@ -446,6 +446,51 @@ def fifo_issue(
     return entries
 
 
+def _layer_free_qty(layer: InventoryReceiptLayer) -> Decimal:
+    return _as_decimal(layer.remaining_quantity) - _as_decimal(layer.reserved_quantity)
+
+
+def _assert_explicit_layer_eligible(
+    *,
+    company,
+    item: Item,
+    lot,
+    warehouse,
+    layer: InventoryReceiptLayer,
+) -> None:
+    """Validate explicit receipt_layer against requested item/lot/warehouse and eligibility."""
+    assert_objects_same_company(company, item=item, lot=lot, layer=layer, warehouse=warehouse)
+    if layer.item_id != item.id:
+        raise ReservationError(
+            "receipt_layer does not belong to the requested item.",
+            code="LAYER_ITEM_MISMATCH",
+        )
+    if lot is not None and layer.lot_id != lot.id:
+        raise ReservationError(
+            "receipt_layer does not belong to the requested lot.",
+            code="LAYER_LOT_MISMATCH",
+        )
+    if warehouse is not None and layer.warehouse_id != warehouse.id:
+        raise ReservationError(
+            "receipt_layer is not in the requested warehouse.",
+            code="LAYER_WAREHOUSE_MISMATCH",
+        )
+    if not layer.is_active:
+        raise ReservationError("receipt_layer is inactive.", code="LAYER_INACTIVE")
+    if layer.lot.status != LotStatus.AVAILABLE:
+        raise ReservationError(
+            f"receipt_layer lot status must be AVAILABLE (current={layer.lot.status}).",
+            code="LAYER_NOT_AVAILABLE",
+        )
+    today = timezone.now().date()
+    if layer.lot.expiry_date is not None and layer.lot.expiry_date < today:
+        raise ReservationError("receipt_layer lot is expired.", code="LAYER_EXPIRED")
+    if _as_decimal(layer.remaining_quantity) <= 0:
+        raise ReservationError("receipt_layer has no remaining quantity.", code="LAYER_EMPTY")
+    if _layer_free_qty(layer) <= 0:
+        raise ReservationError("receipt_layer has no free quantity.", code="LAYER_NO_FREE")
+
+
 @transaction.atomic
 def reserve_stock(
     *,
@@ -461,42 +506,66 @@ def reserve_stock(
     reference_id=None,
     notes: str = "",
 ) -> StockReservation:
+    """
+    Reserve stock against locked eligible layers.
+
+    Critical ordering (concurrency-safe):
+      atomic → select_for_update(eligible layers) → recompute free from locked rows
+      → allocate → update reserved_quantity → allocations + state-event ledger
+    """
     assert_company_allowed(user, company.id)
     assert_objects_same_company(company, item=item, lot=lot, receipt_layer=receipt_layer, warehouse=warehouse)
     qty = _as_decimal(quantity)
     if qty <= 0:
         raise ReservationError("Reservation quantity must be positive.")
 
-    balances = compute_balances(company=company, item=item, warehouse=warehouse)
-    atc = _as_decimal(balances["available_to_consume"])
-    if qty > atc:
-        raise ReservationError(
-            f"Insufficient available-to-consume ({atc}) for reservation of {qty}.",
-            code="INSUFFICIENT_ATC",
-        )
-
     plan: list[tuple[InventoryReceiptLayer, Decimal]] = []
+
     if receipt_layer is not None:
-        layer = InventoryReceiptLayer.objects.select_for_update().get(pk=receipt_layer.pk)
-        assert_objects_same_company(company, layer=layer)
-        free = _as_decimal(layer.remaining_quantity) - _as_decimal(layer.reserved_quantity)
+        # Lock the explicit layer first, then validate & allocate from locked state
+        layer = (
+            InventoryReceiptLayer.objects.select_for_update()
+            .select_related("lot", "item", "warehouse")
+            .get(pk=receipt_layer.pk)
+        )
+        _assert_explicit_layer_eligible(
+            company=company, item=item, lot=lot, warehouse=warehouse, layer=layer
+        )
+        free = _layer_free_qty(layer)
         if qty > free:
-            raise ReservationError("Insufficient free quantity on layer.")
+            raise ReservationError(
+                f"Insufficient free quantity on layer ({free}) for reservation of {qty}.",
+                code="INSUFFICIENT_ATC",
+            )
         plan.append((layer, qty))
     else:
-        layers = list(eligible_layers_qs(company, item, warehouse=warehouse).select_for_update())
+        # Lock ALL eligible layers before computing available free qty
+        layers = list(
+            eligible_layers_qs(company, item, warehouse=warehouse)
+            .select_for_update()
+            .select_related("lot", "item", "warehouse")
+        )
+        locked_free = sum((_layer_free_qty(lyr) for lyr in layers), Decimal("0"))
+        if qty > locked_free:
+            raise ReservationError(
+                f"Insufficient available-to-consume ({locked_free}) for reservation of {qty}.",
+                code="INSUFFICIENT_ATC",
+            )
         need = qty
         for lyr in layers:
             if need <= 0:
                 break
-            free = _as_decimal(lyr.remaining_quantity) - _as_decimal(lyr.reserved_quantity)
+            free = _layer_free_qty(lyr)
             if free <= 0:
                 continue
             take = free if free <= need else need
             plan.append((lyr, take))
             need -= take
         if need > 0:
-            raise ReservationError("Could not allocate reservation to layers.")
+            raise ReservationError(
+                f"Insufficient available-to-consume after lock; short by {need}.",
+                code="INSUFFICIENT_ATC",
+            )
 
     first_layer = plan[0][0]
     reservation = StockReservation.objects.create(

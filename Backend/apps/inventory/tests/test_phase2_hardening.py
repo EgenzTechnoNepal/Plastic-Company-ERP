@@ -915,3 +915,201 @@ class ConcurrencyLockingTests(TransactionTestCase):
         post_putaway(putaway=putaway, user=self.user)
         with self.assertRaises(WarehouseOpsError):
             post_putaway(putaway=putaway, user=self.user)
+
+    def test_second_reservation_fails_after_first_takes_most_atc(self):
+        """100 available → reserve 80 → reserve 30 must fail (only 20 free)."""
+        reserve_stock(
+            company=self.company,
+            item=self.item,
+            quantity=Decimal("80"),
+            uom=self.kg,
+            user=self.user,
+        )
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=self.item,
+                quantity=Decimal("30"),
+                uom=self.kg,
+                user=self.user,
+            )
+        self.assertEqual(ctx.exception.code, "INSUFFICIENT_ATC")
+        layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-C")
+        self.assertEqual(layer.reserved_quantity, Decimal("80.000000"))
+
+
+class ExplicitLayerValidationTests(HardeningBase):
+    def test_layer_different_item_rejected(self):
+        lot = self._available_lot(50, 1000, "LI")
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        other_item = Item.objects.create(
+            company=self.company,
+            sku="RM-OTHER",
+            name="Other Item",
+            item_type=ItemType.RAW_MATERIAL,
+            base_uom=self.kg,
+            purchase_uom=self.kg,
+            stock_uom=self.kg,
+            qc_required=False,
+            fifo_eligible=True,
+        )
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=other_item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                receipt_layer=layer,
+            )
+        self.assertEqual(ctx.exception.code, "LAYER_ITEM_MISMATCH")
+
+    def test_layer_different_lot_rejected(self):
+        lot_a = self._available_lot(50, 1000, "LLA")
+        lot_b = self._available_lot(50, 1000, "LLB")
+        layer_a = InventoryReceiptLayer.objects.get(lot=lot_a)
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=self.item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                lot=lot_b,
+                receipt_layer=layer_a,
+            )
+        self.assertEqual(ctx.exception.code, "LAYER_LOT_MISMATCH")
+
+    def test_layer_different_warehouse_rejected(self):
+        lot = self._available_lot(50, 1000, "LW")
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        other_wh = Warehouse.objects.create(company=self.company, code="WH-ALT", name="Alt")
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=self.item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                receipt_layer=layer,
+                warehouse=other_wh,
+            )
+        self.assertEqual(ctx.exception.code, "LAYER_WAREHOUSE_MISMATCH")
+
+    def test_layer_qc_hold_rejected(self):
+        self.item.qc_required = True
+        self.item.save(update_fields=["qc_required"])
+        self._grn(40, 1000, "LQ")
+        lot = InventoryLot.objects.get(lot_number="LOT-H-LQ")
+        self.assertEqual(lot.status, LotStatus.QC_HOLD)
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=self.item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                receipt_layer=layer,
+            )
+        self.assertEqual(ctx.exception.code, "LAYER_NOT_AVAILABLE")
+
+    def test_layer_expired_rejected(self):
+        from datetime import timedelta
+
+        lot = self._available_lot(40, 1000, "LE")
+        lot.expiry_date = timezone.now().date() - timedelta(days=1)
+        lot.save(update_fields=["expiry_date"])
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        with self.assertRaises(ReservationError) as ctx:
+            reserve_stock(
+                company=self.company,
+                item=self.item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                receipt_layer=layer,
+            )
+        self.assertEqual(ctx.exception.code, "LAYER_EXPIRED")
+
+    def test_layer_other_company_rejected(self):
+        lot = self._available_lot(40, 1000, "LCX")
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        other_item = Item.objects.create(
+            company=self.other,
+            sku="OTH-LAYER",
+            name="Other Co Item",
+            item_type=ItemType.RAW_MATERIAL,
+            base_uom=self.kg,
+            purchase_uom=self.kg,
+            stock_uom=self.kg,
+            qc_required=False,
+            fifo_eligible=True,
+        )
+        with self.assertRaises(CompanyAccessDenied):
+            reserve_stock(
+                company=self.other,
+                item=other_item,
+                quantity=Decimal("10"),
+                uom=self.kg,
+                user=self.user,
+                receipt_layer=layer,
+            )
+
+
+class PutawaySourceValidationTests(HardeningBase):
+    def test_from_bin_other_company_rejected(self):
+        lot = self._available_lot(20, 1000, "PSX")
+        putaway = PutawayOrder.objects.create(
+            company=self.company,
+            putaway_number="PA-SRC-XC",
+            lot=lot,
+            from_bin=self.other_bin,
+            to_warehouse=self.warehouse,
+            to_bin=self.bin_rm,
+            quantity=Decimal("20"),
+        )
+        with self.assertRaises(CompanyAccessDenied):
+            post_putaway(putaway=putaway, user=self.user)
+
+    def test_from_bin_inconsistent_empty_rejected(self):
+        lot = self._available_lot(20, 1000, "PSE")
+        # Stock is in recv; supply a different empty bin of same warehouse
+        empty_bin = Bin.objects.create(
+            warehouse=self.warehouse, code="EMPTY-01", bin_type=BinType.RECEIVING
+        )
+        putaway = PutawayOrder.objects.create(
+            company=self.company,
+            putaway_number="PA-SRC-EMPTY",
+            lot=lot,
+            from_bin=empty_bin,
+            to_warehouse=self.warehouse,
+            to_bin=self.bin_rm,
+            quantity=Decimal("20"),
+        )
+        with self.assertRaises(WarehouseOpsError) as ctx:
+            post_putaway(putaway=putaway, user=self.user)
+        self.assertEqual(ctx.exception.code, "SOURCE_BIN_EMPTY")
+
+
+class AdjustmentLocationValidationTests(HardeningBase):
+    def test_adjustment_warehouse_bin_mismatch_rejected(self):
+        lot = self._available_lot(50, 1000, "ALM")
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        # Layer is at recv; claim warehouse/bin of RM storage
+        adj = StockAdjustment.objects.create(
+            company=self.company,
+            adjustment_number="ADJ-LOC-MIS",
+            item=self.item,
+            lot=lot,
+            receipt_layer=layer,
+            warehouse=self.warehouse,
+            bin=self.bin_rm,
+            quantity_delta=Decimal("-1"),
+            uom=self.kg,
+            unit_cost=Decimal("1000"),
+            reason="wrong location",
+        )
+        with self.assertRaises(WarehouseOpsError) as ctx:
+            post_adjustment(adjustment=adj, user=self.user)
+        self.assertEqual(ctx.exception.code, "LAYER_BIN_MISMATCH")

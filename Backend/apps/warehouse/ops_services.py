@@ -48,7 +48,7 @@ def _layers_for_move(lot, *, from_warehouse=None, from_bin=None, qty_needed: Dec
 @transaction.atomic
 def post_putaway(*, putaway: PutawayOrder, user=None) -> PutawayOrder:
     putaway = PutawayOrder.objects.select_for_update().select_related(
-        "lot", "to_bin", "to_warehouse", "from_bin", "company"
+        "lot", "to_bin", "to_bin__warehouse", "to_warehouse", "from_bin", "from_bin__warehouse", "company"
     ).get(pk=putaway.pk)
     assert_company_allowed(user, putaway.company_id)
     if putaway.status == OpsDocStatus.POSTED:
@@ -56,8 +56,17 @@ def post_putaway(*, putaway: PutawayOrder, user=None) -> PutawayOrder:
 
     lot = putaway.lot
     assert_objects_same_company(
-        putaway.company, lot=lot, to_warehouse=putaway.to_warehouse, to_bin=putaway.to_bin
+        putaway.company,
+        lot=lot,
+        to_warehouse=putaway.to_warehouse,
+        to_bin=putaway.to_bin,
+        from_bin=putaway.from_bin,
     )
+    if putaway.to_bin.warehouse_id != putaway.to_warehouse_id:
+        raise WarehouseOpsError(
+            "Destination bin does not belong to destination warehouse.",
+            code="DEST_BIN_WAREHOUSE_MISMATCH",
+        )
     if lot.status != LotStatus.AVAILABLE:
         raise WarehouseOpsError(
             "Putaway requires lot AVAILABLE (QC must pass first).",
@@ -74,12 +83,29 @@ def post_putaway(*, putaway: PutawayOrder, user=None) -> PutawayOrder:
     if qty > _as_decimal(lot.remaining_quantity):
         raise WarehouseOpsError("Insufficient quantity for putaway.")
 
-    from_bin = putaway.from_bin or lot.bin
-    remaining = qty
-    layers = _layers_for_move(lot, from_bin=from_bin, qty_needed=qty)
-    if from_bin is None:
-        layers = _layers_for_move(lot, qty_needed=qty)
+    # Explicit from_bin: must match company (via warehouse) and be the actual source of selected layers
+    from_bin = putaway.from_bin
+    if from_bin is not None:
+        layers = _layers_for_move(lot, from_bin=from_bin, qty_needed=qty)
+        if not layers:
+            raise WarehouseOpsError(
+                "No stock layers found at the supplied from_bin.",
+                code="SOURCE_BIN_EMPTY",
+            )
+        for layer in layers:
+            if layer.bin_id != from_bin.id:
+                raise WarehouseOpsError(
+                    "Source layer bin does not match putaway from_bin.",
+                    code="SOURCE_BIN_MISMATCH",
+                )
+    else:
+        from_bin = lot.bin
+        if from_bin is not None:
+            layers = _layers_for_move(lot, from_bin=from_bin, qty_needed=qty)
+        else:
+            layers = _layers_for_move(lot, qty_needed=qty)
 
+    remaining = qty
     for layer in layers:
         if remaining <= 0:
             break
@@ -260,7 +286,8 @@ def post_transfer(*, transfer: StockTransfer, user=None) -> StockTransfer:
 @transaction.atomic
 def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustment:
     adjustment = StockAdjustment.objects.select_for_update().select_related(
-        "item", "lot", "receipt_layer", "company"
+        "item", "lot", "receipt_layer", "receipt_layer__warehouse", "receipt_layer__bin", "company",
+        "warehouse", "bin",
     ).get(pk=adjustment.pk)
     assert_company_allowed(user, adjustment.company_id)
     if adjustment.status == OpsDocStatus.POSTED:
@@ -277,10 +304,37 @@ def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustmen
             "receipt_layer is required — multi-layer lots cannot silently adjust the first layer.",
             code="LAYER_REQUIRED",
         )
-    layer = InventoryReceiptLayer.objects.select_for_update().get(pk=adjustment.receipt_layer_id)
+    layer = InventoryReceiptLayer.objects.select_for_update().select_related(
+        "lot", "item", "warehouse", "bin"
+    ).get(pk=adjustment.receipt_layer_id)
     if layer.lot_id != lot.id:
-        raise WarehouseOpsError("receipt_layer does not belong to the adjustment lot.")
-    assert_objects_same_company(adjustment.company, lot=lot, item=adjustment.item, layer=layer)
+        raise WarehouseOpsError(
+            "receipt_layer does not belong to the adjustment lot.",
+            code="LAYER_LOT_MISMATCH",
+        )
+    if layer.item_id != adjustment.item_id:
+        raise WarehouseOpsError(
+            "receipt_layer does not belong to the adjustment item.",
+            code="LAYER_ITEM_MISMATCH",
+        )
+    if adjustment.warehouse_id and layer.warehouse_id != adjustment.warehouse_id:
+        raise WarehouseOpsError(
+            "receipt_layer warehouse does not match adjustment warehouse.",
+            code="LAYER_WAREHOUSE_MISMATCH",
+        )
+    if adjustment.bin_id and layer.bin_id != adjustment.bin_id:
+        raise WarehouseOpsError(
+            "receipt_layer bin does not match adjustment bin.",
+            code="LAYER_BIN_MISMATCH",
+        )
+    assert_objects_same_company(
+        adjustment.company,
+        lot=lot,
+        item=adjustment.item,
+        layer=layer,
+        warehouse=adjustment.warehouse,
+        bin=adjustment.bin,
+    )
 
     if lot.status not in {LotStatus.AVAILABLE, LotStatus.QC_HOLD, LotStatus.QUARANTINED}:
         raise WarehouseOpsError("Lot status not adjustable.")
@@ -292,6 +346,9 @@ def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustmen
     layer.save(update_fields=["remaining_quantity", "updated_at"])
     sync_lot_remaining_from_layers(lot)
 
+    # Ledger location must describe the actual selected layer
+    ledger_warehouse = layer.warehouse
+    ledger_bin = layer.bin
     unit = _as_decimal(adjustment.unit_cost) or layer_unit_cost(layer)
     if delta > 0:
         append_ledger_entry(
@@ -299,8 +356,8 @@ def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustmen
             item=adjustment.item,
             lot=lot,
             receipt_layer=layer,
-            warehouse=adjustment.warehouse,
-            bin=adjustment.bin,
+            warehouse=ledger_warehouse,
+            bin=ledger_bin,
             txn_type=StockTxnType.ADJUSTMENT_IN,
             quantity_in=delta,
             uom=adjustment.uom,
@@ -316,8 +373,8 @@ def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustmen
             item=adjustment.item,
             lot=lot,
             receipt_layer=layer,
-            warehouse=adjustment.warehouse,
-            bin=adjustment.bin,
+            warehouse=ledger_warehouse,
+            bin=ledger_bin,
             txn_type=StockTxnType.ADJUSTMENT_OUT,
             quantity_out=abs(delta),
             uom=adjustment.uom,
