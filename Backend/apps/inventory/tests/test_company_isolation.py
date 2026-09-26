@@ -286,3 +286,20 @@ class MultiCompanyIsolationAPITests(APITestCase):
         """Compatibility: DomainRecord inventory products route must remain registered."""
         response = self.client.get(reverse("products-list"))
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_organization_delete_other_company_tax_category_rejected(self):
+        """Regression: organization hard-delete must use normal MRO + company scope."""
+        response = self.client.delete(reverse("tax-category-detail", args=[self.tax_b.id]))
+        self.assertIn(response.status_code, (status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN))
+        self.assertTrue(TaxCategory.objects.filter(pk=self.tax_b.id).exists())
+
+    def test_organization_delete_own_tax_category_allowed(self):
+        tax_a = TaxCategory.objects.create(company=self.company_a, code="VAT-A", name="VAT A")
+        response = self.client.delete(reverse("tax-category-detail", args=[tax_a.id]))
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(TaxCategory.objects.filter(pk=tax_a.id).exists())
+
+    def test_delete_other_company_rejected(self):
+        response = self.client.delete(reverse("company-detail", args=[self.company_b.id]))
+        self.assertIn(response.status_code, (status.HTTP_404_NOT_FOUND, status.HTTP_403_FORBIDDEN))
+        self.assertTrue(Company.objects.filter(pk=self.company_b.id).exists())

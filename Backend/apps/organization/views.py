@@ -1,7 +1,7 @@
 from rest_framework import viewsets
 
 from apps.accounts.permissions import HasModulePermission
-from apps.organization.company_scope import CompanyScopedMixin, assert_company_allowed, resolve_company_id
+from apps.organization.company_scope import CompanyScopedMixin, assert_company_allowed
 from apps.organization.models import (
     Branch,
     Company,
@@ -49,11 +49,6 @@ class OrganizationModuleViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
         self._assert_validated_company_access(serializer.validated_data, instance=serializer.instance)
         serializer.save()
 
-    def perform_destroy(self, instance):
-        if self.company_field:
-            assert_company_allowed(self.request.user, resolve_company_id(instance, self.company_field))
-        return super(viewsets.ModelViewSet, self).perform_destroy(instance)
-
 
 class CompanyViewSet(OrganizationModuleViewSet):
     """List/retrieve only companies the user is authorized for."""
@@ -71,10 +66,6 @@ class CompanyViewSet(OrganizationModuleViewSet):
     def perform_update(self, serializer):
         assert_company_allowed(self.request.user, serializer.instance.pk)
         serializer.save()
-
-    def perform_destroy(self, instance):
-        assert_company_allowed(self.request.user, instance.pk)
-        return super(viewsets.ModelViewSet, self).perform_destroy(instance)
 
 
 class BranchViewSet(OrganizationModuleViewSet):
