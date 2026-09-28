@@ -16,7 +16,6 @@ from apps.procurement.bill_services import (
     create_supplier_bill,
     match_supplier_bill,
     post_supplier_bill,
-    SupplierBillError,
 )
 from apps.procurement.commercial import (
     PurchaseOrder,
@@ -24,7 +23,6 @@ from apps.procurement.commercial import (
     PurchaseOrderStatus,
     SupplierBill,
     SupplierBillLine,
-    SupplierBillStatus,
 )
 from apps.procurement.po_services import (
     add_po_line,
@@ -108,7 +106,7 @@ class PurchaseOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     queryset = PurchaseOrder.objects.prefetch_related("lines").all()
     serializer_class = PurchaseOrderSerializer
     filterset_fields = ["company", "supplier", "status"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "head", "options"]
 
     def create(self, request, *args, **kwargs):
         ser = self.get_serializer(data=request.data)
@@ -313,18 +311,7 @@ class SupplierBillViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     queryset = SupplierBill.objects.prefetch_related("lines").all()
     serializer_class = SupplierBillSerializer
     filterset_fields = ["company", "supplier", "status", "match_status"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
-
-    def _assert_editable(self, bill: SupplierBill) -> None:
-        if bill.commercials_frozen or bill.status in {
-            SupplierBillStatus.APPROVED_FOR_AP,
-            SupplierBillStatus.POSTED,
-            SupplierBillStatus.CANCELLED,
-        }:
-            raise SupplierBillError(
-                "Cannot edit frozen/approved/posted bill.",
-                code="BILL_FROZEN",
-            )
+    http_method_names = ["get", "post", "head", "options"]
 
     def create(self, request, *args, **kwargs):
         ser = self.get_serializer(data=request.data)
@@ -355,11 +342,6 @@ class SupplierBillViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
             SupplierBillSerializer(SupplierBill.objects.prefetch_related("lines").get(pk=bill.pk)).data,
             status=status.HTTP_201_CREATED,
         )
-
-    def partial_update(self, request, *args, **kwargs):
-        bill = self.get_object()
-        self._assert_editable(bill)
-        return super().partial_update(request, *args, **kwargs)
 
     @action(detail=True, methods=["post"], url_path="match")
     def match(self, request, pk=None):

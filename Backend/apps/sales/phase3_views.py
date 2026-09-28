@@ -107,7 +107,7 @@ class SalesOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     queryset = SalesOrder.objects.prefetch_related("lines").all()
     serializer_class = SalesOrderSerializer
     filterset_fields = ["company", "customer", "status"]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "head", "options"]
 
     def create(self, request, *args, **kwargs):
         ser = self.get_serializer(data=request.data)

@@ -51,6 +51,9 @@ def add_so_line(*, sales_order: SalesOrder, item, uom, ordered_quantity, user=No
     if so.status != SalesOrderStatus.DRAFT:
         raise SalesOrderError("Lines can only be added to DRAFT sales orders.")
     assert_related_same_company(so.company_id, "item", item)
+    line_wh = fields.get("warehouse")
+    if line_wh is not None:
+        assert_related_same_company(so.company_id, "warehouse", line_wh)
     qty = _as_decimal(ordered_quantity)
     if qty <= 0:
         raise SalesOrderError("Ordered quantity must be positive.")

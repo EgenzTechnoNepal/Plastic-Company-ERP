@@ -95,6 +95,9 @@ def add_po_line(*, purchase_order: PurchaseOrder, item, uom, ordered_quantity, u
     if po.status != PurchaseOrderStatus.DRAFT:
         raise PurchaseOrderError("Lines can only be added to DRAFT POs.")
     assert_related_same_company(po.company_id, "item", item)
+    dest_wh = fields.get("destination_warehouse")
+    if dest_wh is not None:
+        assert_related_same_company(po.company_id, "destination_warehouse", dest_wh)
     qty = _as_decimal(ordered_quantity)
     if qty <= 0:
         raise PurchaseOrderError("Ordered quantity must be positive.")
