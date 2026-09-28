@@ -50,25 +50,51 @@ def create_dispatch_note(*, sales_order: SalesOrder, user=None, warehouse=None, 
 
 @transaction.atomic
 def add_dispatch_line(
-    *, dispatch: DispatchNote, sales_order_line: SalesOrderLine, quantity, user=None
+    *, dispatch: DispatchNote, sales_order_line: SalesOrderLine, quantity, user=None, uom=None
 ) -> DispatchNoteLine:
-    dn = DispatchNote.objects.select_for_update().get(pk=dispatch.pk)
+    dn = (
+        DispatchNote.objects.select_for_update()
+        .select_related("sales_order", "company")
+        .get(pk=dispatch.pk)
+    )
     assert_company_allowed(user, dn.company_id)
     if dn.status != DispatchNoteStatus.DRAFT:
         raise DispatchError("Cannot add lines to posted dispatch.")
-    if sales_order_line.sales_order_id != dn.sales_order_id:
-        raise DispatchError("Dispatch line SO mismatch.")
+
+    so_line = SalesOrderLine.objects.select_related("sales_order", "item", "uom").get(
+        pk=sales_order_line.pk
+    )
+    if so_line.sales_order_id != dn.sales_order_id:
+        raise DispatchError("Dispatch line SO mismatch.", code="SO_LINE_MISMATCH")
+    if so_line.sales_order.company_id != dn.company_id:
+        raise DispatchError(
+            "Sales order line belongs to another company.",
+            code="CROSS_COMPANY_SO_LINE",
+        )
+    assert_related_same_company(dn.company_id, "sales_order_line_item", so_line.item)
+
     qty = _as_decimal(quantity)
-    remaining_ordered = _as_decimal(sales_order_line.ordered_quantity) - _as_decimal(
-        sales_order_line.dispatched_quantity
+    if qty <= 0:
+        raise DispatchError("Dispatch quantity must be positive.", code="INVALID_QUANTITY")
+
+    remaining_ordered = _as_decimal(so_line.ordered_quantity) - _as_decimal(
+        so_line.dispatched_quantity
     )
     if qty > remaining_ordered:
-        raise DispatchError("Dispatch quantity exceeds remaining ordered quantity.")
+        raise DispatchError(
+            "Dispatch quantity exceeds remaining ordered quantity.",
+            code="QTY_EXCEEDS_REMAINING",
+        )
+
+    line_uom = uom or so_line.uom
+    if line_uom.id != so_line.uom_id:
+        raise DispatchError("UOM mismatch with sales order line.", code="UOM_MISMATCH")
+
     return DispatchNoteLine.objects.create(
         dispatch=dn,
-        sales_order_line=sales_order_line,
+        sales_order_line=so_line,
         quantity=qty,
-        uom=sales_order_line.uom,
+        uom=line_uom,
         created_by=user,
         updated_by=user,
     )
@@ -76,6 +102,11 @@ def add_dispatch_line(
 
 @transaction.atomic
 def post_dispatch(*, dispatch: DispatchNote, user=None) -> DispatchNote:
+    """
+    Architecture (mandatory):
+      Dispatch → issue_reserved_stock() → ISSUE ledger → consume reservation allocation
+    NEVER release_reservation() → fifo_issue().
+    """
     dn = (
         DispatchNote.objects.select_for_update()
         .select_related("sales_order", "company")
@@ -90,7 +121,20 @@ def post_dispatch(*, dispatch: DispatchNote, user=None) -> DispatchNote:
         raise DispatchError("Dispatch has no lines.")
 
     for dline in lines:
-        so_line = SalesOrderLine.objects.select_for_update().get(pk=dline.sales_order_line_id)
+        so_line = SalesOrderLine.objects.select_for_update().select_related("sales_order").get(
+            pk=dline.sales_order_line_id
+        )
+        if so_line.sales_order_id != dn.sales_order_id:
+            raise DispatchError("Dispatch line SO mismatch.", code="SO_LINE_MISMATCH")
+        if so_line.sales_order.company_id != dn.company_id:
+            raise DispatchError(
+                "Sales order line belongs to another company.",
+                code="CROSS_COMPANY_SO_LINE",
+            )
+        if dline.uom_id != so_line.uom_id:
+            raise DispatchError("UOM mismatch with sales order line.", code="UOM_MISMATCH")
+
+        # ONLY reservation-aware issue — never fifo_issue
         issue_reserved_stock(
             company=dn.company,
             sales_order_line_id=so_line.id,

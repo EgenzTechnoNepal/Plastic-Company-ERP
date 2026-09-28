@@ -7,12 +7,12 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 
-from apps.core.phase3_policy import REQUIRE_PO_ON_GRN
 from apps.core.events import GRN_POSTED, emit
 from apps.core.exceptions import ERPError, InvalidStatusTransitionError
+from apps.core.phase3_policy import PO_RECEIVABLE_STATUSES, REQUIRE_PO_ON_GRN
 from apps.inventory.models import InventoryLot, InventoryReceiptLayer, LotStatus
 from apps.inventory.ledger import StockTxnType
-from apps.inventory.services import _as_decimal
+from apps.inventory.services import UomConversionError, _as_decimal, convert_quantity
 from apps.inventory.stock_services import append_ledger_entry, next_receipt_sequence
 from apps.organization.company_scope import assert_company_allowed, assert_related_same_company
 from apps.procurement.inbound import (
@@ -41,6 +41,74 @@ def _transition_gate(gate: GateEntry, new_status: str) -> GateEntry:
     return gate
 
 
+def _assert_uom_compatible(grn_uom, po_uom) -> None:
+    if grn_uom is None or po_uom is None:
+        raise InboundError("UOM is required on GRN and PO lines.", code="UOM_REQUIRED")
+    if grn_uom.id == po_uom.id:
+        return
+    try:
+        convert_quantity(Decimal("1"), grn_uom, po_uom)
+    except UomConversionError as exc:
+        raise InboundError(
+            "GRN line UOM is not compatible with PO line UOM.",
+            code="UOM_INCOMPATIBLE",
+        ) from exc
+
+
+def _validate_po_line_for_grn(*, grn: GoodsReceiptNote, line: GoodsReceiptLine, accepted: Decimal):
+    """
+    Full PO linkage integrity BEFORE lot/layer/ledger/progress.
+    Returns locked PurchaseOrderLine.
+    """
+    from apps.core.phase3_policy import over_receipt_allowed
+    from apps.procurement.commercial import PurchaseOrder, PurchaseOrderLine
+
+    pol = (
+        PurchaseOrderLine.objects.select_for_update()
+        .select_related("purchase_order", "purchase_order__supplier", "item", "uom")
+        .get(pk=line.purchase_order_line_id)
+    )
+    po: PurchaseOrder = PurchaseOrder.objects.select_for_update().select_related("supplier").get(
+        pk=pol.purchase_order_id
+    )
+
+    if po.company_id != grn.company_id:
+        raise InboundError(
+            "PO company does not match GRN company.",
+            code="CROSS_COMPANY_PO",
+        )
+    if po.supplier_id != grn.supplier_id:
+        raise InboundError(
+            "PO supplier does not match GRN supplier.",
+            code="SUPPLIER_MISMATCH",
+        )
+    if pol.purchase_order_id != po.id:
+        raise InboundError("PO line does not belong to linked PO.", code="PO_LINE_MISMATCH")
+    if line.item_id != pol.item_id:
+        raise InboundError(
+            "GRN line item does not match PO line item.",
+            code="ITEM_MISMATCH",
+        )
+    _assert_uom_compatible(line.uom, pol.uom)
+
+    if po.status not in PO_RECEIVABLE_STATUSES:
+        raise InboundError(
+            f"PO status {po.status} is not receivable.",
+            code="PO_NOT_RECEIVABLE",
+            fields={"status": po.status},
+        )
+
+    assert_related_same_company(grn.company_id, "purchase_order", po)
+    assert_related_same_company(grn.company_id, "purchase_order_line_item", pol.item)
+
+    if not over_receipt_allowed(pol.ordered_quantity, pol.received_quantity, accepted):
+        raise InboundError(
+            "Over-receipt exceeds configured tolerance.",
+            code="OVER_RECEIPT",
+        )
+    return pol
+
+
 @transaction.atomic
 def submit_gate_entry(*, gate: GateEntry, user=None) -> GateEntry:
     gate = GateEntry.objects.select_for_update().get(pk=gate.pk)
@@ -65,7 +133,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     grn = (
         GoodsReceiptNote.objects.select_for_update()
         .select_related("company", "supplier", "warehouse", "receiving_bin")
-        .prefetch_related("lines__item", "lines__uom")
+        .prefetch_related("lines__item", "lines__uom", "lines__purchase_order_line")
         .get(pk=grn.pk)
     )
     assert_company_allowed(user, grn.company_id)
@@ -79,8 +147,10 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     assert_related_same_company(grn.company_id, "supplier", grn.supplier)
     assert_related_same_company(grn.company_id, "warehouse", grn.warehouse)
 
-    now = timezone.now()
-    for line in grn.lines.select_related("item", "uom", "purchase_order_line").all():
+    lines = list(grn.lines.select_related("item", "uom", "purchase_order_line").all())
+
+    # Pre-validate ALL PO linkages before any stock write
+    for line in lines:
         qty = _as_decimal(line.received_quantity)
         if qty <= 0:
             raise InboundError("Received quantity must be positive.")
@@ -88,20 +158,16 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
         if accepted <= 0:
             continue
         assert_related_same_company(grn.company_id, "item", line.item)
-
-        # Pre-validate PO over-receipt before creating stock
         if line.purchase_order_line_id:
-            from apps.core.phase3_policy import over_receipt_allowed
-            from apps.procurement.commercial import PurchaseOrderLine
-
-            pol = PurchaseOrderLine.objects.select_for_update().get(pk=line.purchase_order_line_id)
-            if not over_receipt_allowed(pol.ordered_quantity, pol.received_quantity, accepted):
-                raise InboundError(
-                    "Over-receipt exceeds configured tolerance.",
-                    code="OVER_RECEIPT",
-                )
+            _validate_po_line_for_grn(grn=grn, line=line, accepted=accepted)
         elif REQUIRE_PO_ON_GRN:
             raise InboundError("PO line is required on GRN lines.", code="PO_REQUIRED")
+
+    now = timezone.now()
+    for line in lines:
+        accepted = _as_decimal(line.accepted_quantity) or _as_decimal(line.received_quantity)
+        if accepted <= 0:
+            continue
 
         lot_number = line.lot_number or f"{grn.grn_number}-{line.item.sku}"
         initial_status = LotStatus.QC_HOLD if line.item.qc_required else LotStatus.AVAILABLE
@@ -131,7 +197,6 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             created_by=user,
             updated_by=user,
         )
-        # If somehow created as RECEIVED, force to QC_HOLD path — we create directly at QC_HOLD
         seq = next_receipt_sequence(grn.company, line.item)
         layer = InventoryReceiptLayer.objects.create(
             company=grn.company,

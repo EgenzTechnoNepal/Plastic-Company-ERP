@@ -48,3 +48,28 @@ def match_within_tolerance(a: Decimal, b: Decimal, *, base: Decimal | None = Non
     ref = abs(base if base is not None else max(a, b, Decimal("1")))
     tol = (ref * THREE_WAY_MATCH_TOLERANCE_PCT / Decimal("100")).quantize(Decimal("0.000001"))
     return abs(a - b) <= tol
+
+
+def match_class(a: Decimal, b: Decimal, *, base: Decimal | None = None) -> str:
+    """
+    Return 'exact' | 'tolerance' | 'mismatch' for a vs b.
+    Used by server 3-way match status semantics.
+    """
+    a = Decimal(str(a))
+    b = Decimal(str(b))
+    if a == b:
+        return "exact"
+    if match_within_tolerance(a, b, base=base):
+        return "tolerance"
+    return "mismatch"
+
+
+# PO statuses that may receive against GRN lines
+PO_RECEIVABLE_STATUSES = frozenset(
+    {
+        "APPROVED",
+        "SENT",
+        "PARTIALLY_RECEIVED",
+        "RECEIVED",
+    }
+)

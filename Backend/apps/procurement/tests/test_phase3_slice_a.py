@@ -344,13 +344,15 @@ class SupplierBillMatchTests(Phase3ProcurementBase):
             quantity=Decimal("50"),
             unit_price=Decimal("10"),
             user=self.user,
+            purchase_order_line=line,
+            grn_line=gl,
         )
         matched = match_supplier_bill(bill=bill, user=self.user)
         self.assertEqual(matched.match_status, SupplierBillMatchStatus.MISMATCHED)
 
     def test_price_mismatch(self):
         po, line = self._approved_po("100", "10")
-        grn, _gl = self._posted_grn_for_po(po, line, "100")
+        grn, gl = self._posted_grn_for_po(po, line, "100")
         bill = create_supplier_bill(
             company=self.company,
             supplier=self.supplier,
@@ -366,13 +368,15 @@ class SupplierBillMatchTests(Phase3ProcurementBase):
             quantity=Decimal("100"),
             unit_price=Decimal("50"),
             user=self.user,
+            purchase_order_line=line,
+            grn_line=gl,
         )
         matched = match_supplier_bill(bill=bill, user=self.user)
         self.assertEqual(matched.match_status, SupplierBillMatchStatus.MISMATCHED)
 
     def test_tolerance_match(self):
         po, line = self._approved_po("100", "10")
-        grn, _gl = self._posted_grn_for_po(po, line, "100")
+        grn, gl = self._posted_grn_for_po(po, line, "100")
         bill = create_supplier_bill(
             company=self.company,
             supplier=self.supplier,
@@ -381,7 +385,7 @@ class SupplierBillMatchTests(Phase3ProcurementBase):
             purchase_order=po,
             grn=grn,
         )
-        # 101 qty within 2% of 100
+        # 101 qty within 2% of 100 → TOLERANCE_MATCHED (not exact)
         add_bill_line(
             bill=bill,
             item=self.item,
@@ -389,9 +393,11 @@ class SupplierBillMatchTests(Phase3ProcurementBase):
             quantity=Decimal("101"),
             unit_price=Decimal("10"),
             user=self.user,
+            purchase_order_line=line,
+            grn_line=gl,
         )
         matched = match_supplier_bill(bill=bill, user=self.user)
-        self.assertEqual(matched.match_status, SupplierBillMatchStatus.MATCHED)
+        self.assertEqual(matched.match_status, SupplierBillMatchStatus.TOLERANCE_MATCHED)
 
     def test_duplicate_supplier_invoice(self):
         create_supplier_bill(
