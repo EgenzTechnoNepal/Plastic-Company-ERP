@@ -2,7 +2,7 @@ import { getService } from "@/services/catalog";
 import { logAudit, newLineId, notify, recordTotal } from "@/services/entityService";
 import { db } from "@/services/mock/db";
 import { num, str } from "@/lib/records";
-import { confirmSalesOrder } from "@/services/api/phase3";
+import { confirmSalesOrder, setSalesOrderFulfillment } from "@/services/api/phase3";
 import { PHASE2_TYPED_API } from "@/services/api/phase2";
 import { apiFetch } from "@/services/api/client";
 import type { ErpRecord, LineItem } from "@/types/erp";
@@ -253,10 +253,20 @@ export async function fulfillSalesOrder(so: ErpRecord, step: "allocate" | "pick"
       throw new Error("Allocate stock before picking.");
     }
     fields.pickStatus = "Picked";
+    const typedId = str(so, "typedSalesOrderId") || str(so, "typedId");
+    if (typedId) {
+      const flags = await setSalesOrderFulfillment(typedId, { pick_status: "DONE" });
+      fields.typedPickStatus = flags.pick_status;
+    }
   }
   if (step === "pack") {
     if (str(so, "pickStatus") !== "Picked") throw new Error("Pick the order before packing.");
     fields.packStatus = "Packed";
+    const typedId = str(so, "typedSalesOrderId") || str(so, "typedId");
+    if (typedId) {
+      const flags = await setSalesOrderFulfillment(typedId, { pack_status: "DONE" });
+      fields.typedPackStatus = flags.pack_status;
+    }
   }
   const updated = await getService("sales_orders").update(so.id, {
     status: "in_progress",

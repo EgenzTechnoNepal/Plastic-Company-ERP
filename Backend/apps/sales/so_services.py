@@ -203,3 +203,147 @@ def release_sales_order_reservations(*, sales_order: SalesOrder, user=None) -> S
     so.save(update_fields=["status", "updated_by", "updated_at"])
     emit("ReservationReleased", {"so_id": str(so.id), "source": "sales_order_release"})
     return so
+
+
+@transaction.atomic
+def cancel_so_line(*, sales_order_line: SalesOrderLine, quantity=None, user=None) -> SalesOrderLine:
+    """
+    Cancel remaining open quantity on one SO line.
+    Releases ONLY this line's open reservations. No stock ledger / fifo_issue.
+    """
+    line = (
+        SalesOrderLine.objects.select_for_update()
+        .select_related("sales_order")
+        .get(pk=sales_order_line.pk)
+    )
+    so = SalesOrder.objects.select_for_update().get(pk=line.sales_order_id)
+    assert_company_allowed(user, so.company_id)
+    if so.status == SalesOrderStatus.CANCELLED:
+        raise SalesOrderError("Sales order is already cancelled.")
+    if so.company_id != line.sales_order.company_id:
+        raise SalesOrderError("Cross-company SO line.", code="CROSS_COMPANY_SO_LINE")
+
+    dispatched = _as_decimal(line.dispatched_quantity)
+    invoiced = _as_decimal(line.invoiced_quantity)
+    cancelled = _as_decimal(line.cancelled_quantity)
+    ordered = _as_decimal(line.ordered_quantity)
+    # Remaining that can still be cancelled (not yet dispatched)
+    remaining = ordered - dispatched - cancelled
+    if remaining <= 0:
+        raise SalesOrderError(
+            "No remaining quantity to cancel (fully dispatched or already cancelled).",
+            code="NOTHING_TO_CANCEL",
+        )
+    cancel_qty = remaining if quantity is None else _as_decimal(quantity)
+    if cancel_qty <= 0:
+        raise SalesOrderError("Cancel quantity must be positive.", code="INVALID_QUANTITY")
+    if cancel_qty > remaining:
+        raise SalesOrderError(
+            "Cannot cancel more than remaining open quantity.",
+            code="CANCEL_EXCEEDS_REMAINING",
+            fields={"remaining": str(remaining)},
+        )
+    # Cannot cancel already dispatched or reduce below invoiced commitment on open portion
+    if invoiced > dispatched + cancelled + cancel_qty:
+        # invoiced beyond what would remain open is ok if invoiced <= ordered historically;
+        # block only if cancel would leave ordered - cancelled < invoiced
+        if ordered - (cancelled + cancel_qty) < invoiced:
+            raise SalesOrderError(
+                "Cannot cancel quantity that has already been invoiced.",
+                code="CANCEL_INVOICED",
+            )
+
+    line.cancelled_quantity = cancelled + cancel_qty
+    # Release open reservations for THIS line only, then re-reserve remaining open if needed
+    open_reservations = list(
+        StockReservation.objects.select_for_update().filter(
+            company=so.company,
+            reference_type=SO_LINE_RESERVATION_REF,
+            reference_id=line.id,
+            status=ReservationStatus.OPEN,
+        )
+    )
+    for res in open_reservations:
+        release_reservation(reservation=res, user=user)
+
+    still_needed = ordered - line.cancelled_quantity - dispatched
+    if still_needed > 0 and so.status not in {
+        SalesOrderStatus.DRAFT,
+        SalesOrderStatus.CANCELLED,
+    }:
+        wh = line.warehouse or so.warehouse
+        try:
+            res = reserve_stock(
+                company=so.company,
+                item=line.item,
+                quantity=still_needed,
+                uom=line.uom,
+                user=user,
+                warehouse=wh,
+                reference_type=SO_LINE_RESERVATION_REF,
+                reference_id=line.id,
+                notes=f"SO {so.document_number} line {line.line_no} after cancel",
+            )
+            line.reserved_quantity = _as_decimal(res.quantity)
+        except ReservationError:
+            line.reserved_quantity = Decimal("0")
+    else:
+        line.reserved_quantity = Decimal("0")
+
+    line.updated_by = user
+    line.save(update_fields=["cancelled_quantity", "reserved_quantity", "updated_by", "updated_at"])
+
+    # Recompute SO status
+    so = SalesOrder.objects.select_for_update().prefetch_related("lines").get(pk=so.pk)
+    lines = list(so.lines.all())
+    all_cancelled = all(
+        _as_decimal(l.ordered_quantity) - _as_decimal(l.cancelled_quantity) <= 0 for l in lines
+    )
+    if all_cancelled and not any(_as_decimal(l.dispatched_quantity) > 0 for l in lines):
+        so.status = SalesOrderStatus.CANCELLED
+    so.updated_by = user
+    so.save(update_fields=["status", "updated_by", "updated_at"])
+
+    emit(
+        "SalesOrderLineCancelled",
+        {
+            "so_id": str(so.id),
+            "line_id": str(line.id),
+            "cancel_qty": str(cancel_qty),
+            "cancelled_quantity": str(line.cancelled_quantity),
+        },
+    )
+    return line
+
+
+@transaction.atomic
+def set_so_fulfillment_flags(
+    *,
+    sales_order: SalesOrder,
+    user=None,
+    pick_status=None,
+    pack_status=None,
+    promised_delivery_date=...,
+) -> SalesOrder:
+    """Operational pick/pack flags only — no stock / reservation / ledger effects."""
+    from apps.sales.commercial import FulfillmentFlag
+
+    so = SalesOrder.objects.select_for_update().get(pk=sales_order.pk)
+    assert_company_allowed(user, so.company_id)
+    fields = ["updated_by", "updated_at"]
+    if pick_status is not None:
+        if pick_status not in FulfillmentFlag.values:
+            raise SalesOrderError("Invalid pick_status.", code="INVALID_FULFILLMENT_FLAG")
+        so.pick_status = pick_status
+        fields.append("pick_status")
+    if pack_status is not None:
+        if pack_status not in FulfillmentFlag.values:
+            raise SalesOrderError("Invalid pack_status.", code="INVALID_FULFILLMENT_FLAG")
+        so.pack_status = pack_status
+        fields.append("pack_status")
+    if promised_delivery_date is not ...:
+        so.promised_delivery_date = promised_delivery_date
+        fields.append("promised_delivery_date")
+    so.updated_by = user
+    so.save(update_fields=fields)
+    return so

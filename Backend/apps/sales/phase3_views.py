@@ -1,5 +1,8 @@
-"""Phase 3 Slice A — typed SO, Dispatch, Sales Invoice APIs."""
+"""Phase 3 Slice A/B — typed SO, Dispatch, Sales Invoice APIs."""
 
+from decimal import Decimal
+
+from django.db.models import Sum
 from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,13 +19,20 @@ from apps.sales.commercial import (
     SalesOrderLine,
 )
 from apps.sales.dispatch_services import add_dispatch_line, create_dispatch_note, post_dispatch
-from apps.sales.invoice_services import add_invoice_line, create_sales_invoice, post_sales_invoice
+from apps.sales.invoice_services import (
+    add_invoice_line,
+    cancel_sales_invoice,
+    create_sales_invoice,
+    post_sales_invoice,
+)
 from apps.sales.so_services import (
     add_so_line,
     cancel_sales_order,
+    cancel_so_line,
     confirm_sales_order,
     create_sales_order,
     release_sales_order_reservations,
+    set_so_fulfillment_flags,
 )
 
 
@@ -39,6 +49,7 @@ class SalesOrderLineSerializer(serializers.ModelSerializer):
             "reserved_quantity",
             "dispatched_quantity",
             "invoiced_quantity",
+            "cancelled_quantity",
             "unit_price",
             "discount_pct",
             "tax_pct",
@@ -50,6 +61,7 @@ class SalesOrderLineSerializer(serializers.ModelSerializer):
             "reserved_quantity",
             "dispatched_quantity",
             "invoiced_quantity",
+            "cancelled_quantity",
         ]
 
 
@@ -66,9 +78,12 @@ class SalesOrderSerializer(serializers.ModelSerializer):
             "currency",
             "warehouse",
             "requested_delivery_date",
+            "promised_delivery_date",
             "payment_terms",
             "customer_reference",
             "status",
+            "pick_status",
+            "pack_status",
             "credit_warning",
             "notes",
             "confirmed_at",
@@ -124,6 +139,28 @@ class SalesOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED,
         )
 
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        qs = self.filter_queryset(self.get_queryset())
+        lines = SalesOrderLine.objects.filter(sales_order__in=qs)
+        agg = lines.aggregate(
+            ordered=Sum("ordered_quantity"),
+            reserved=Sum("reserved_quantity"),
+            dispatched=Sum("dispatched_quantity"),
+            invoiced=Sum("invoiced_quantity"),
+            cancelled=Sum("cancelled_quantity"),
+        )
+        return envelope(
+            {
+                "so_count": qs.count(),
+                "ordered_qty": str(agg["ordered"] or Decimal("0")),
+                "reserved_qty": str(agg["reserved"] or Decimal("0")),
+                "dispatched_qty": str(agg["dispatched"] or Decimal("0")),
+                "invoiced_qty": str(agg["invoiced"] or Decimal("0")),
+                "cancelled_qty": str(agg["cancelled"] or Decimal("0")),
+            }
+        )
+
     @action(detail=True, methods=["post"], url_path="confirm")
     def confirm(self, request, pk=None):
         return envelope(
@@ -142,6 +179,31 @@ class SalesOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
             SalesOrderSerializer(
                 release_sales_order_reservations(sales_order=self.get_object(), user=request.user)
             ).data
+        )
+
+    @action(detail=True, methods=["post"], url_path="set-fulfillment")
+    def set_fulfillment(self, request, pk=None):
+        data = request.data
+        promised = data.get("promised_delivery_date", ...)
+        so = set_so_fulfillment_flags(
+            sales_order=self.get_object(),
+            user=request.user,
+            pick_status=data.get("pick_status"),
+            pack_status=data.get("pack_status"),
+            promised_delivery_date=promised if "promised_delivery_date" in data else ...,
+        )
+        return envelope(SalesOrderSerializer(so).data)
+
+    @action(detail=True, methods=["post"], url_path=r"lines/(?P<line_id>[^/.]+)/cancel")
+    def cancel_line(self, request, pk=None, line_id=None):
+        line = SalesOrderLine.objects.get(pk=line_id, sales_order=self.get_object())
+        cancel_so_line(
+            sales_order_line=line,
+            quantity=request.data.get("quantity"),
+            user=request.user,
+        )
+        return envelope(
+            SalesOrderSerializer(SalesOrder.objects.prefetch_related("lines").get(pk=pk)).data
         )
 
 
@@ -240,9 +302,11 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             "sales_order",
             "dispatch_note",
             "currency",
+            "exchange_rate",
             "status",
             "invoice_date",
             "due_date",
+            "commercials_frozen",
             "subtotal",
             "tax_total",
             "total",
@@ -255,6 +319,7 @@ class SalesInvoiceSerializer(serializers.ModelSerializer):
             "id",
             "document_number",
             "status",
+            "commercials_frozen",
             "subtotal",
             "tax_total",
             "total",
@@ -304,4 +369,10 @@ class SalesInvoiceViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     def post_document(self, request, pk=None):
         return envelope(
             SalesInvoiceSerializer(post_sales_invoice(invoice=self.get_object(), user=request.user)).data
+        )
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        return envelope(
+            SalesInvoiceSerializer(cancel_sales_invoice(invoice=self.get_object(), user=request.user)).data
         )

@@ -4,7 +4,7 @@ import { db } from "@/services/mock/db";
 import { isLowStock, num, str } from "@/lib/records";
 import { notifyRecoveredAlerts } from "@/features/inventory/cycle";
 import { findWarehousePlan, reorderQty } from "@/features/inventory/planning";
-import { matchSupplierBill } from "@/services/api/phase3";
+import { amendPurchaseOrder as amendTypedPurchaseOrder, matchSupplierBill, approveSupplierBillForAp } from "@/services/api/phase3";
 import type { ErpRecord, LineItem } from "@/types/erp";
 
 export const MATCH_TOLERANCE_PCT = 2;
@@ -208,6 +208,31 @@ export async function convertRfqToPo(rfq: ErpRecord): Promise<ErpRecord> {
 }
 
 export async function amendPurchaseOrder(po: ErpRecord): Promise<ErpRecord> {
+  const typedId = str(po, "typedPurchaseOrderId") || str(po, "typedId");
+  if (typedId) {
+    const amended = await amendTypedPurchaseOrder(typedId, {
+      notes: str(po, "notes") || undefined,
+      expected_delivery_date: str(po, "deliveryDate") || undefined,
+    });
+    const revision = amended.revision_no ?? Number(String(po.fields.amendment ?? "1").replace(/\D+/g, "")) + 1;
+    const updated = await getService("purchase_orders").update(po.id, {
+      fields: {
+        ...po.fields,
+        amendment: `Rev ${String(revision).padStart(2, "0")}`,
+        typedStatus: amended.status,
+        revisionNo: revision,
+      },
+    });
+    logAudit({
+      action: "edit",
+      module: "purchase",
+      entity: "purchase_orders",
+      recordId: po.id,
+      recordCode: po.code,
+      reason: `Typed amend ${typedId}`,
+    });
+    return updated;
+  }
   const current = String(po.fields.amendment ?? "Rev 01");
   const n = Number(current.replace(/\D+/g, "")) || 1;
   const amendment = `Rev ${String(n + 1).padStart(2, "0")}`;
@@ -339,6 +364,15 @@ export async function createBillFromGrn(grn: ErpRecord): Promise<ErpRecord> {
       const matched = await matchSupplierBill(typedBillId);
       matchStatus = matched.match_status;
       matchNote = matched.match_exceptions || matched.match_status;
+      if (matched.match_status === "MATCHED" || matched.match_status === "TOLERANCE_MATCHED") {
+        try {
+          const approved = await approveSupplierBillForAp(typedBillId);
+          matchStatus = approved.status;
+          matchNote = `Approved for AP · ${approved.match_status}`;
+        } catch {
+          /* match succeeded; approve may require separate action */
+        }
+      }
     } catch {
       matchStatus = "Pending";
       matchNote = "Server match unavailable; client preview is not authoritative";

@@ -28,11 +28,13 @@ PO_TRANSITIONS = {
         PurchaseOrderStatus.SENT,
         PurchaseOrderStatus.PARTIALLY_RECEIVED,
         PurchaseOrderStatus.RECEIVED,
+        PurchaseOrderStatus.CLOSED,  # all remaining cancelled, nothing receivable
         PurchaseOrderStatus.CANCELLED,
     },
     PurchaseOrderStatus.SENT: {
         PurchaseOrderStatus.PARTIALLY_RECEIVED,
         PurchaseOrderStatus.RECEIVED,
+        PurchaseOrderStatus.CLOSED,
         PurchaseOrderStatus.CANCELLED,
     },
     PurchaseOrderStatus.PARTIALLY_RECEIVED: {
@@ -43,6 +45,28 @@ PO_TRANSITIONS = {
     PurchaseOrderStatus.CLOSED: set(),
     PurchaseOrderStatus.CANCELLED: set(),
 }
+
+# States that may be amended (not CLOSED / CANCELLED)
+PO_AMENDABLE_STATUSES = frozenset(
+    {
+        PurchaseOrderStatus.DRAFT,
+        PurchaseOrderStatus.SUBMITTED,
+        PurchaseOrderStatus.APPROVED,
+        PurchaseOrderStatus.SENT,
+        PurchaseOrderStatus.PARTIALLY_RECEIVED,
+        PurchaseOrderStatus.RECEIVED,
+    }
+)
+
+# States eligible for close when remaining_receivable == 0 on every line
+PO_CLOSEABLE_STATUSES = frozenset(
+    {
+        PurchaseOrderStatus.APPROVED,
+        PurchaseOrderStatus.SENT,
+        PurchaseOrderStatus.PARTIALLY_RECEIVED,
+        PurchaseOrderStatus.RECEIVED,
+    }
+)
 
 
 class PurchaseOrder(BaseModel):
@@ -84,8 +108,17 @@ class PurchaseOrder(BaseModel):
         max_length=30, choices=PurchaseOrderStatus.choices, default=PurchaseOrderStatus.DRAFT
     )
     notes = models.TextField(blank=True)
+    revision_no = models.PositiveIntegerField(default=1)
     approved_at = models.DateTimeField(null=True, blank=True)
     approved_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(
         "accounts.User",
         null=True,
         blank=True,
@@ -137,10 +170,14 @@ class PurchaseOrderLine(BaseModel):
         ]
 
     @property
-    def open_quantity(self):
+    def remaining_receivable(self):
         return (
             self.ordered_quantity - self.cancelled_quantity - self.received_quantity
         )
+
+    @property
+    def open_quantity(self):
+        return self.remaining_receivable
 
 
 class SupplierBillMatchStatus(models.TextChoices):
@@ -153,6 +190,7 @@ class SupplierBillMatchStatus(models.TextChoices):
 class SupplierBillStatus(models.TextChoices):
     DRAFT = "DRAFT", "Draft"
     SUBMITTED = "SUBMITTED", "Submitted"
+    APPROVED_FOR_AP = "APPROVED_FOR_AP", "Approved for AP"
     POSTED = "POSTED", "Posted"
     CANCELLED = "CANCELLED", "Cancelled"
 
@@ -191,6 +229,9 @@ class SupplierBill(BaseModel):
         on_delete=models.PROTECT,
         related_name="+",
     )
+    exchange_rate = models.DecimalField(max_digits=18, decimal_places=8, default=Decimal("1"))
+    discount_pct = models.DecimalField(max_digits=8, decimal_places=4, default=Decimal("0"))
+    discount_amount = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
     status = models.CharField(
         max_length=20, choices=SupplierBillStatus.choices, default=SupplierBillStatus.DRAFT
     )
@@ -205,6 +246,15 @@ class SupplierBill(BaseModel):
     total = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
     notes = models.TextField(blank=True)
     posted_at = models.DateTimeField(null=True, blank=True)
+    approved_for_ap_at = models.DateTimeField(null=True, blank=True)
+    approved_for_ap_by = models.ForeignKey(
+        "accounts.User",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="+",
+    )
+    commercials_frozen = models.BooleanField(default=False)
 
     class Meta(BaseModel.Meta):
         constraints = [

@@ -148,8 +148,8 @@ def add_bill_line(*, bill: SupplierBill, item, uom, quantity, unit_price, user=N
         "purchase_order", "grn", "supplier", "company"
     ).get(pk=bill.pk)
     assert_company_allowed(user, bill.company_id)
-    if bill.status != SupplierBillStatus.DRAFT:
-        raise SupplierBillError("Lines only on DRAFT bills.")
+    if bill.status != SupplierBillStatus.DRAFT or bill.commercials_frozen:
+        raise SupplierBillError("Lines only on unfrozen DRAFT bills.")
     qty = _as_decimal(quantity)
     if qty <= 0:
         raise SupplierBillError("Bill line quantity must be positive.")
@@ -176,6 +176,11 @@ def add_bill_line(*, bill: SupplierBill, item, uom, quantity, unit_price, user=N
 
 
 def _recompute_totals(bill: SupplierBill) -> None:
+    if bill.commercials_frozen and bill.status in {
+        SupplierBillStatus.APPROVED_FOR_AP,
+        SupplierBillStatus.POSTED,
+    }:
+        return
     sub = Decimal("0")
     tax = Decimal("0")
     for line in bill.lines.all():
@@ -183,10 +188,14 @@ def _recompute_totals(bill: SupplierBill) -> None:
         t = base * _as_decimal(line.tax_pct) / Decimal("100")
         sub += base
         tax += t
+    discount = _as_decimal(bill.discount_amount)
+    if discount == 0 and _as_decimal(bill.discount_pct) > 0:
+        discount = (sub * _as_decimal(bill.discount_pct) / Decimal("100")).quantize(Decimal("0.0001"))
+        bill.discount_amount = discount
     bill.subtotal = sub.quantize(Decimal("0.0001"))
     bill.tax_total = tax.quantize(Decimal("0.0001"))
-    bill.total = (sub + tax).quantize(Decimal("0.0001"))
-    bill.save(update_fields=["subtotal", "tax_total", "total", "updated_at"])
+    bill.total = (sub - discount + tax).quantize(Decimal("0.0001"))
+    bill.save(update_fields=["subtotal", "tax_total", "total", "discount_amount", "updated_at"])
 
 
 @transaction.atomic
@@ -219,6 +228,12 @@ def match_supplier_bill(*, bill: SupplierBill, user=None) -> SupplierBill:
         .get(pk=bill.pk)
     )
     assert_company_allowed(user, bill.company_id)
+    if bill.commercials_frozen or bill.status in {
+        SupplierBillStatus.APPROVED_FOR_AP,
+        SupplierBillStatus.POSTED,
+        SupplierBillStatus.CANCELLED,
+    }:
+        raise SupplierBillError("Cannot rematch a frozen/approved/posted bill.", code="BILL_FROZEN")
     exceptions: list[str] = []
     saw_tolerance = False
 
@@ -351,11 +366,85 @@ def match_supplier_bill(*, bill: SupplierBill, user=None) -> SupplierBill:
 
 
 @transaction.atomic
+def approve_for_ap(*, bill: SupplierBill, user=None) -> SupplierBill:
+    """
+    Freeze commercial totals/FX/discount and move to APPROVED_FOR_AP.
+    Requires MATCHED or TOLERANCE_MATCHED. No GL/AP posting.
+    """
+    bill = SupplierBill.objects.select_for_update().get(pk=bill.pk)
+    assert_company_allowed(user, bill.company_id)
+    if bill.status in {
+        SupplierBillStatus.APPROVED_FOR_AP,
+        SupplierBillStatus.POSTED,
+        SupplierBillStatus.CANCELLED,
+    }:
+        raise SupplierBillError(
+            f"Cannot approve bill in status {bill.status}.",
+            code="INVALID_STATUS",
+        )
+    if bill.match_status not in {
+        SupplierBillMatchStatus.MATCHED,
+        SupplierBillMatchStatus.TOLERANCE_MATCHED,
+    }:
+        raise SupplierBillError(
+            "Bill must be MATCHED or TOLERANCE_MATCHED before APPROVED_FOR_AP.",
+            code="MATCH_REQUIRED",
+            fields={"match_status": bill.match_status},
+        )
+    # Recompute then freeze
+    _recompute_totals(bill)
+    bill.refresh_from_db()
+    bill.status = SupplierBillStatus.APPROVED_FOR_AP
+    bill.commercials_frozen = True
+    bill.approved_for_ap_at = timezone.now()
+    bill.approved_for_ap_by = user
+    bill.updated_by = user
+    bill.save(
+        update_fields=[
+            "status",
+            "commercials_frozen",
+            "approved_for_ap_at",
+            "approved_for_ap_by",
+            "updated_by",
+            "updated_at",
+            "subtotal",
+            "tax_total",
+            "total",
+        ]
+    )
+    emit(
+        "SupplierBillApprovedForAp",
+        {
+            "bill_id": str(bill.id),
+            "total": str(bill.total),
+            "exchange_rate": str(bill.exchange_rate),
+            "discount_amount": str(bill.discount_amount),
+        },
+    )
+    return bill
+
+
+@transaction.atomic
 def post_supplier_bill(*, bill: SupplierBill, user=None) -> SupplierBill:
     bill = SupplierBill.objects.select_for_update().get(pk=bill.pk)
     assert_company_allowed(user, bill.company_id)
     if bill.status == SupplierBillStatus.POSTED:
         raise SupplierBillError("Bill already posted.", code="DUPLICATE_POST")
+    if bill.status == SupplierBillStatus.APPROVED_FOR_AP:
+        bill.status = SupplierBillStatus.POSTED
+        bill.posted_at = timezone.now()
+        bill.commercials_frozen = True
+        bill.updated_by = user
+        bill.save(
+            update_fields=[
+                "status",
+                "posted_at",
+                "commercials_frozen",
+                "updated_by",
+                "updated_at",
+            ]
+        )
+        return bill
     if bill.match_status not in {
         SupplierBillMatchStatus.MATCHED,
         SupplierBillMatchStatus.TOLERANCE_MATCHED,
@@ -370,6 +459,15 @@ def post_supplier_bill(*, bill: SupplierBill, user=None) -> SupplierBill:
             )
     bill.status = SupplierBillStatus.POSTED
     bill.posted_at = timezone.now()
+    bill.commercials_frozen = True
     bill.updated_by = user
-    bill.save(update_fields=["status", "posted_at", "updated_by", "updated_at"])
+    bill.save(
+        update_fields=[
+            "status",
+            "posted_at",
+            "commercials_frozen",
+            "updated_by",
+            "updated_at",
+        ]
+    )
     return bill

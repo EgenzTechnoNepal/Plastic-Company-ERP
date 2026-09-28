@@ -33,3 +33,11 @@ DISPATCH_POSTED = "DispatchPosted"
 SUPPLIER_BILL_MATCHED = "SupplierBillMatched"
 SUPPLIER_BILL_MISMATCHED = "SupplierBillMismatched"
 SALES_INVOICE_POSTED = "SalesInvoicePosted"
+
+# Phase 3 Slice B MUST
+PURCHASE_ORDER_SENT = "PurchaseOrderSent"
+PURCHASE_ORDER_CLOSED = "PurchaseOrderClosed"
+PURCHASE_ORDER_AMENDED = "PurchaseOrderAmended"
+PURCHASE_ORDER_LINE_CANCELLED = "PurchaseOrderLineCancelled"
+SALES_ORDER_LINE_CANCELLED = "SalesOrderLineCancelled"
+SUPPLIER_BILL_APPROVED_FOR_AP = "SupplierBillApprovedForAp"

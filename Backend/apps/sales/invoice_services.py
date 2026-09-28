@@ -152,7 +152,11 @@ def add_invoice_line(*, invoice: SalesInvoice, item, uom, quantity, unit_price, 
                     "Invoice line UOM is not compatible with sales order line UOM.",
                     code="UOM_INCOMPATIBLE",
                 ) from exc
-        remaining = _as_decimal(so_line.ordered_quantity) - _as_decimal(so_line.invoiced_quantity)
+        remaining = (
+            _as_decimal(so_line.ordered_quantity)
+            - _as_decimal(so_line.invoiced_quantity)
+            - _as_decimal(getattr(so_line, "cancelled_quantity", 0) or 0)
+        )
         if qty > remaining:
             raise SalesInvoiceError(
                 "Invoice quantity exceeds remaining invoicable quantity.",
@@ -162,6 +166,9 @@ def add_invoice_line(*, invoice: SalesInvoice, item, uom, quantity, unit_price, 
         fields = {**fields, "sales_order_line": so_line}
 
     assert_related_same_company(inv.company_id, "item", item)
+
+    if inv.commercials_frozen:
+        raise SalesInvoiceError("Cannot add lines to frozen invoice.", code="INVOICE_FROZEN")
 
     last = inv.lines.order_by("-line_no").values_list("line_no", flat=True).first() or 0
     line = SalesInvoiceLine.objects.create(
@@ -228,7 +235,11 @@ def post_sales_invoice(*, invoice: SalesInvoice, user=None) -> SalesInvoice:
                     "Invoice line item does not match sales order line item.",
                     code="ITEM_MISMATCH",
                 )
-            remaining = _as_decimal(sol.ordered_quantity) - _as_decimal(sol.invoiced_quantity)
+            remaining = (
+                _as_decimal(sol.ordered_quantity)
+                - _as_decimal(sol.invoiced_quantity)
+                - _as_decimal(getattr(sol, "cancelled_quantity", 0) or 0)
+            )
             if _as_decimal(line.quantity) > remaining:
                 raise SalesInvoiceError(
                     "Invoice quantity exceeds remaining invoicable quantity.",
@@ -240,7 +251,12 @@ def post_sales_invoice(*, invoice: SalesInvoice, user=None) -> SalesInvoice:
     if inv.sales_order_id:
         so = SalesOrder.objects.select_for_update().prefetch_related("lines").get(pk=inv.sales_order_id)
         all_inv = all(
-            _as_decimal(l.invoiced_quantity) >= _as_decimal(l.ordered_quantity) for l in so.lines.all()
+            _as_decimal(l.invoiced_quantity)
+            >= (
+                _as_decimal(l.ordered_quantity)
+                - _as_decimal(getattr(l, "cancelled_quantity", 0) or 0)
+            )
+            for l in so.lines.all()
         )
         any_inv = any(_as_decimal(l.invoiced_quantity) > 0 for l in so.lines.all())
         if all_inv:
@@ -251,7 +267,37 @@ def post_sales_invoice(*, invoice: SalesInvoice, user=None) -> SalesInvoice:
 
     inv.status = SalesInvoiceStatus.POSTED
     inv.posted_at = timezone.now()
+    inv.commercials_frozen = True
     inv.updated_by = user
-    inv.save(update_fields=["status", "posted_at", "updated_by", "updated_at"])
+    inv.save(
+        update_fields=[
+            "status",
+            "posted_at",
+            "commercials_frozen",
+            "exchange_rate",
+            "subtotal",
+            "tax_total",
+            "total",
+            "updated_by",
+            "updated_at",
+        ]
+    )
     emit("SalesInvoicePosted", {"invoice_id": str(inv.id)})
+    return inv
+
+
+@transaction.atomic
+def cancel_sales_invoice(*, invoice: SalesInvoice, user=None) -> SalesInvoice:
+    """DRAFT only. POSTED invoices are immutable (credit note later)."""
+    inv = SalesInvoice.objects.select_for_update().get(pk=invoice.pk)
+    assert_company_allowed(user, inv.company_id)
+    if inv.status != SalesInvoiceStatus.DRAFT:
+        raise SalesInvoiceError(
+            "Only DRAFT invoices can be cancelled.",
+            code="INVALID_STATUS",
+            fields={"status": inv.status},
+        )
+    inv.status = SalesInvoiceStatus.CANCELLED
+    inv.updated_by = user
+    inv.save(update_fields=["status", "updated_by", "updated_at"])
     return inv

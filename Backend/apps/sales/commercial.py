@@ -20,6 +20,11 @@ class SalesOrderStatus(models.TextChoices):
     CANCELLED = "CANCELLED", "Cancelled"
 
 
+class FulfillmentFlag(models.TextChoices):
+    NOT_STARTED = "NOT_STARTED", "Not Started"
+    DONE = "DONE", "Done"
+
+
 class SalesOrder(BaseModel):
     """Customer commercial order — does NOT create inventory."""
 
@@ -45,10 +50,17 @@ class SalesOrder(BaseModel):
         related_name="+",
     )
     requested_delivery_date = models.DateField(null=True, blank=True)
+    promised_delivery_date = models.DateField(null=True, blank=True)
     payment_terms = models.CharField(max_length=100, blank=True)
     customer_reference = models.CharField(max_length=80, blank=True)
     status = models.CharField(
         max_length=30, choices=SalesOrderStatus.choices, default=SalesOrderStatus.DRAFT
+    )
+    pick_status = models.CharField(
+        max_length=20, choices=FulfillmentFlag.choices, default=FulfillmentFlag.NOT_STARTED
+    )
+    pack_status = models.CharField(
+        max_length=20, choices=FulfillmentFlag.choices, default=FulfillmentFlag.NOT_STARTED
     )
     credit_warning = models.CharField(max_length=255, blank=True)
     notes = models.TextField(blank=True)
@@ -81,6 +93,7 @@ class SalesOrderLine(BaseModel):
     reserved_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     dispatched_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     invoiced_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
+    cancelled_quantity = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     unit_price = models.DecimalField(max_digits=18, decimal_places=6, default=Decimal("0"))
     discount_pct = models.DecimalField(max_digits=8, decimal_places=4, default=Decimal("0"))
     tax_pct = models.DecimalField(max_digits=8, decimal_places=4, default=Decimal("0"))
@@ -95,6 +108,10 @@ class SalesOrderLine(BaseModel):
                 condition=models.Q(ordered_quantity__gt=0), name="ck_soline_qty_positive"
             ),
         ]
+
+    @property
+    def remaining_open(self):
+        return self.ordered_quantity - self.dispatched_quantity - self.cancelled_quantity
 
 
 class DispatchNoteStatus(models.TextChoices):
@@ -187,6 +204,7 @@ class SalesInvoice(BaseModel):
         on_delete=models.PROTECT,
         related_name="+",
     )
+    exchange_rate = models.DecimalField(max_digits=18, decimal_places=8, default=Decimal("1"))
     status = models.CharField(
         max_length=20, choices=SalesInvoiceStatus.choices, default=SalesInvoiceStatus.DRAFT
     )
@@ -197,6 +215,7 @@ class SalesInvoice(BaseModel):
     total = models.DecimalField(max_digits=18, decimal_places=4, default=Decimal("0"))
     notes = models.TextField(blank=True)
     posted_at = models.DateTimeField(null=True, blank=True)
+    commercials_frozen = models.BooleanField(default=False)
 
     class Meta(BaseModel.Meta):
         constraints = [
