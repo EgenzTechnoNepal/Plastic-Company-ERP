@@ -9,7 +9,6 @@ import {
   Wallet,
   AlertTriangle,
   ClipboardList,
-  UserCog,
   Plus,
   ArrowRight,
 } from "lucide-react";
@@ -34,6 +33,7 @@ import { compactNpr, npr } from "@/lib/export";
 import { isLowStock, num, statusLabel, statusTone, stockValue, str } from "@/lib/records";
 import { recordTotal, useRecords } from "@/services/entityService";
 import { useAuthStore } from "@/store/auth";
+import { useDashboardSummary } from "@/services/api/dashboard";
 
 export const Route = createFileRoute("/_app/dashboard")({
   component: DashboardPage,
@@ -47,22 +47,28 @@ function monthLabel(date: string) {
 
 function DashboardPage() {
   const user = useAuthStore((s) => s.user);
+  const live = useAuthStore((s) => s.source === "api");
+  const { data: summary } = useDashboardSummary();
   const invoices = useRecords("invoices");
   const salesOrders = useRecords("sales_orders");
   const purchaseOrders = useRecords("purchase_orders");
   const products = useRecords("products");
   const customers = useRecords("customers");
   const suppliers = useRecords("suppliers");
-  const employees = useRecords("employees");
   const workOrders = useRecords("work_orders");
 
-  const invoiced = invoices.reduce((s, r) => s + recordTotal(r), 0);
-  const produced = workOrders.reduce((s, r) => s + num(r, "producedQty"), 0);
-  const openPos = purchaseOrders.filter((r) => !["completed", "cancelled"].includes(r.status));
-  const openSos = salesOrders.filter((r) => !["completed", "cancelled"].includes(r.status));
-  const inventoryValue = products.reduce((s, r) => s + stockValue(r), 0);
+  const invoiced = summary
+    ? Number(summary.sales.posted_invoice_total || 0)
+    : invoices.reduce((s, r) => s + recordTotal(r), 0);
+  const openPos = summary
+    ? summary.purchase.open_purchase_orders
+    : purchaseOrders.filter((r) => !["completed", "cancelled", "posted"].includes(r.status)).length;
+  const openSos = summary
+    ? summary.sales.open_sales_orders
+    : salesOrders.filter((r) => !["completed", "cancelled", "posted"].includes(r.status)).length;
   const low = products.filter(isLowStock);
-  const critical = low.filter((r) => num(r, "onHand") < num(r, "reorderLevel") / 3);
+  const qcHold = summary?.inventory.lots_qc_hold ?? 0;
+  const availableLots = summary?.inventory.lots_available ?? 0;
 
   const byMonth = new Map<string, { m: string; sales: number; production: number; purchase: number }>();
   const bump = (date: string) => {
@@ -85,7 +91,11 @@ function DashboardPage() {
     <div>
       <PageHeader
         title={`Welcome back, ${user?.name?.split(" ")[0] ?? "there"}`}
-        description="Live snapshot of production, sales, purchase and inventory from the local store."
+        description={
+          live && summary
+            ? `Live KPIs from ${summary.company_name} (typed database).`
+            : "Operational snapshot — connect API login for live typed KPIs."
+        }
         actions={
           <>
             <Button variant="outline" size="sm" asChild>
@@ -106,36 +116,66 @@ function DashboardPage() {
         <KpiCard
           label="Invoiced Sales"
           value={compactNpr(invoiced)}
-          hint={`${invoices.length} invoices`}
+          hint={summary ? `${summary.sales.posted_invoices} posted invoices` : `${invoices.length} invoices`}
           icon={ShoppingCart}
         />
         <KpiCard
-          label="Production Output"
-          value={`${produced.toLocaleString("en-IN")} pcs`}
-          hint={`${workOrders.length} work orders`}
-          icon={Factory}
+          label="Lots Available"
+          value={summary ? availableLots : products.filter((p) => num(p, "available") > 0 || num(p, "onHand") > 0).length}
+          hint={summary ? `QC hold: ${qcHold}` : "from products"}
+          icon={Boxes}
           accent="accent"
         />
         <KpiCard
           label="Open POs"
-          value={openPos.length}
-          hint={npr(openPos.reduce((s, r) => s + recordTotal(r), 0))}
+          value={openPos}
+          hint={
+            summary
+              ? npr(Number(summary.purchase.open_po_line_value || 0))
+              : npr(purchaseOrders.reduce((s, r) => s + recordTotal(r), 0))
+          }
           icon={Truck}
           accent="secondary"
         />
-        <KpiCard label="Open SOs" value={openSos.length} hint={`${openSos.length} still in flow`} icon={ClipboardList} accent="muted" />
-        <KpiCard label="Inventory Value" value={compactNpr(inventoryValue)} hint="RM + FG" icon={Boxes} />
         <KpiCard
-          label="Low Stock Items"
-          value={low.length}
-          hint={`${critical.length} critical`}
+          label="Open SOs"
+          value={openSos}
+          hint={summary ? `Reserved qty ${summary.inventory.reserved_quantity}` : `${openSos} still in flow`}
+          icon={ClipboardList}
+          accent="muted"
+        />
+        <KpiCard
+          label="Posted GRNs"
+          value={summary ? summary.purchase.posted_grns : "—"}
+          hint={summary ? `Bills ${summary.purchase.supplier_bills}` : "seed after login"}
+          icon={Warehouse}
+        />
+        <KpiCard
+          label="QC Open"
+          value={summary ? summary.quality.open_inspections : "—"}
+          hint={summary ? `Pass ${summary.quality.passed} / Fail ${summary.quality.failed}` : undefined}
           icon={AlertTriangle}
           accent="muted"
         />
-        <KpiCard label="Customers" value={customers.length} icon={Users} />
-        <KpiCard label="Suppliers" value={suppliers.length} icon={Warehouse} accent="secondary" />
-        <KpiCard label="Employees" value={employees.length} icon={UserCog} accent="accent" />
-        <KpiCard label="AR Outstanding" value={compactNpr(sumOutstanding(customers))} hint="customer dues" icon={Wallet} />
+        <KpiCard label="Customers" value={summary?.masters.customers ?? customers.length} icon={Users} />
+        <KpiCard
+          label="Suppliers"
+          value={summary?.masters.suppliers ?? suppliers.length}
+          icon={Warehouse}
+          accent="secondary"
+        />
+        <KpiCard
+          label="Items / Bins"
+          value={summary ? `${summary.masters.items} / ${summary.masters.bins}` : products.length}
+          icon={Factory}
+          accent="accent"
+        />
+        <KpiCard
+          label="Pending Approvals"
+          value={summary?.workflow.pending_approvals ?? 0}
+          hint="typed ApprovalRequest"
+          icon={Wallet}
+        />
       </div>
 
       <div className="mt-6 grid gap-4 lg:grid-cols-2">
@@ -159,7 +199,14 @@ function DashboardPage() {
                 />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line type="monotone" dataKey="sales" name="Sales (L)" stroke="var(--color-primary)" strokeWidth={2.5} dot={{ r: 3 }} />
-                <Line type="monotone" dataKey="production" name="Output (10k pcs)" stroke="var(--color-accent)" strokeWidth={2.5} dot={{ r: 3 }} />
+                <Line
+                  type="monotone"
+                  dataKey="production"
+                  name="Output (10k pcs)"
+                  stroke="var(--color-accent)"
+                  strokeWidth={2.5}
+                  dot={{ r: 3 }}
+                />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -216,48 +263,71 @@ function DashboardPage() {
                   </div>
                 </li>
               ))}
+              {recent.length === 0 && (
+                <p className="py-4 text-sm text-muted-foreground">
+                  No typed sales orders yet — create one after stock is AVAILABLE (seed_m2_demo_chain).
+                </p>
+              )}
             </ul>
           </CardContent>
         </Card>
 
         <Card className="rounded-2xl border-border/60 shadow-sm">
           <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-base">Low Stock</CardTitle>
+            <CardTitle className="text-base">Stock / QC snapshot</CardTitle>
             <Button variant="ghost" size="sm" asChild>
-              <Link to="/inventory/alerts">
-                Manage <ArrowRight className="ml-1 h-3.5 w-3.5" />
+              <Link to="/inventory/ledger">
+                Ledger <ArrowRight className="ml-1 h-3.5 w-3.5" />
               </Link>
             </Button>
           </CardHeader>
           <CardContent>
-            <ul className="space-y-3">
-              {low.slice(0, 4).map((s) => {
-                const onHand = num(s, "onHand");
-                const min = num(s, "reorderLevel") || 1;
-                return (
-                  <li key={s.id} className="rounded-xl border border-border/60 bg-muted/30 p-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">{s.title}</p>
-                        <p className="text-xs text-muted-foreground">{s.code}</p>
+            {summary ? (
+              <ul className="space-y-2 text-sm">
+                <li className="flex justify-between">
+                  <span>Available lots</span>
+                  <strong>{summary.inventory.lots_available}</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>QC hold</span>
+                  <strong>{summary.inventory.lots_qc_hold}</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Quarantine</span>
+                  <strong>{summary.inventory.lots_quarantined}</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Reserved qty</span>
+                  <strong>{summary.inventory.reserved_quantity}</strong>
+                </li>
+                <li className="flex justify-between">
+                  <span>Dispatches posted</span>
+                  <strong>{summary.sales.posted_dispatches}</strong>
+                </li>
+              </ul>
+            ) : (
+              <ul className="space-y-3">
+                {low.slice(0, 4).map((s) => {
+                  const onHand = num(s, "onHand");
+                  const min = num(s, "reorderLevel") || 1;
+                  return (
+                    <li key={s.id} className="rounded-xl border border-border/60 bg-muted/30 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">{s.title}</p>
+                          <p className="text-xs text-muted-foreground">{s.code}</p>
+                        </div>
+                        <StatusBadge tone={onHand < min / 3 ? "danger" : "warning"}>{onHand} left</StatusBadge>
                       </div>
-                      <StatusBadge tone={onHand < min / 3 ? "danger" : "warning"}>{onHand} left</StatusBadge>
-                    </div>
-                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-background">
-                      <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, (onHand / min) * 100)}%` }} />
-                    </div>
-                  </li>
-                );
-              })}
-              {low.length === 0 && <p className="text-sm text-muted-foreground">No items below reorder level.</p>}
-            </ul>
+                    </li>
+                  );
+                })}
+                {low.length === 0 && <p className="text-sm text-muted-foreground">No low-stock rows.</p>}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>
     </div>
   );
-}
-
-function sumOutstanding(customers: ReturnType<typeof useRecords>) {
-  return customers.reduce((s, r) => s + num(r, "outstanding"), 0);
 }
