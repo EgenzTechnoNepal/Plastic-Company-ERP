@@ -21,6 +21,7 @@ import {
   RECORD_PATHS,
   updateRecord,
 } from "@/services/api/records";
+import { M2_DEMO_TYPED_ENTITIES } from "@/services/api/m2Typed";
 import { fetchAuditLogs } from "@/services/api/audit";
 
 const now = () => new Date().toISOString();
@@ -83,7 +84,8 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
         try {
           return await listRecords(entity);
         } catch (err) {
-          if (!isMissingResource(err)) throw err;
+          // M2 demo path: never silently substitute mock stock/commercial data.
+          if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
         }
       }
       return rows();
@@ -93,6 +95,7 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
         try {
           return await getRecord(entity, id);
         } catch (err) {
+          if (M2_DEMO_TYPED_ENTITIES.has(entity)) throw err;
           if (!isMissingResource(err)) {
             const local = rows().find((r) => r.id === id || r.code === id);
             if (local) return local;
@@ -122,7 +125,7 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
           write([created, ...rows().filter((r) => r.id !== created.id)]);
           return created;
         } catch (err) {
-          if (!isMissingResource(err)) throw err;
+          if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
         }
       }
       const record: ErpRecord = {
@@ -159,7 +162,11 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
           write(rows().map((r) => (r.id === before.id || r.code === before.code ? saved : r)));
           return saved;
         } catch (err) {
-          if (!isMissingResource(err)) throw err;
+          // Typed list entities may not support DomainRecord PATCH — keep UI overlay only.
+          if (M2_DEMO_TYPED_ENTITIES.has(entity) && isMissingResource(err)) {
+            return updated;
+          }
+          if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
         }
       }
       write(rows().map((r) => (r.id === before.id ? updated : r)));
@@ -408,13 +415,18 @@ export type EntityService = ReturnType<typeof createEntityService>;
 export function useRecords(entity: string): ErpRecord[] {
   const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
   const live = useAuthStore((s) => s.source === "api");
-  const { data } = useQuery({
+  const { data, isError } = useQuery({
     queryKey: ["records", entity],
     queryFn: () => listRecords(entity),
     enabled: live && Boolean(RECORD_PATHS[entity]),
     staleTime: 15_000,
     retry: 1,
   });
+  if (live && M2_DEMO_TYPED_ENTITIES.has(entity)) {
+    // Never show localStorage mock stock/commercials while authenticated live.
+    if (isError) return EMPTY_RECORDS;
+    return data ?? EMPTY_RECORDS;
+  }
   return live && data ? data : mock;
 }
 export function useRecord(entity: string, code: string): ErpRecord | undefined {

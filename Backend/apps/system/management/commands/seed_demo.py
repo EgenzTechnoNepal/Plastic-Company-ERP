@@ -69,8 +69,21 @@ class Command(BaseCommand):
             self._seed_users(role_map)
             self._seed_records()
             self._seed_typed_crm(company)
+            self._seed_m2_chain(company)
 
         self.stdout.write(self.style.SUCCESS(f"Demo data seeded for company '{company.name}'."))
+
+    def _seed_m2_chain(self, company):
+        """Typed M2 demo masters + inbound chain (AVAILABLE + landed). Outbound left interactive."""
+        from apps.system.management.commands.seed_m2_demo_chain import run as seed_m2
+
+        result = seed_m2(interactive=True)
+        self.stdout.write(
+            self.style.NOTICE(
+                f"M2 typed chain: lot={result.get('lot')} status={result.get('lot_status')} "
+                f"grn={result.get('grn')} landed={result.get('landed')}"
+            )
+        )
 
     def _seed_organization(self):
         company, _ = Company.objects.get_or_create(

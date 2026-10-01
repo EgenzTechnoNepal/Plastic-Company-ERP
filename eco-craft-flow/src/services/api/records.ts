@@ -142,6 +142,9 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
     const { listTypedActivities } = await import("./crm");
     return listTypedActivities();
   }
+  const { listM2TypedEntity } = await import("./m2Typed");
+  const m2 = await listM2TypedEntity(entity);
+  if (m2) return m2;
   const { data } = await apiFetchMeta<RecordDto[]>(pathFor(entity), {
     query: { page_size: 200 },
     silent: true,
@@ -150,7 +153,26 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
-  if (entity === "customers" || entity === "contacts" || entity === "activities") {
+  if (
+    entity === "customers" ||
+    entity === "contacts" ||
+    entity === "activities" ||
+    [
+      "suppliers",
+      "products",
+      "warehouses",
+      "bins",
+      "purchase_orders",
+      "gate_entries",
+      "grns",
+      "purchase_bills",
+      "sales_orders",
+      "deliveries",
+      "invoices",
+      "qc_inspections",
+      "stock_movements",
+    ].includes(entity)
+  ) {
     const rows = await listRecords(entity);
     const found = rows.find((r) => r.id === id || r.code === id);
     if (!found) throw new ApiError("NOT_FOUND", "Not found", 404);

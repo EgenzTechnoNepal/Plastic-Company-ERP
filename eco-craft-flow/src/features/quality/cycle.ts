@@ -119,6 +119,30 @@ export async function completeInspection(qc: ErpRecord, result: "Pass" | "Fail")
   if (!["draft", "submitted", "hold"].includes(qc.status)) {
     throw new Error("This inspection is already closed.");
   }
+
+  const typedId = str(qc, "typedId");
+  if (typedId) {
+    const { apiFetch } = await import("@/services/api/client");
+    const { PHASE2_TYPED_API } = await import("@/services/api/phase2");
+    if (result === "Pass") {
+      await apiFetch(PHASE2_TYPED_API.qcPass(typedId), { method: "POST" });
+    } else {
+      await apiFetch(PHASE2_TYPED_API.qcFail(typedId), {
+        method: "POST",
+        body: { disposition: "QUARANTINED", remarks: "Failed from UI" },
+      });
+    }
+    notify({
+      type: "quality",
+      priority: result === "Fail" ? "high" : "normal",
+      title: `${qc.code} ${result === "Pass" ? "passed" : "failed"} (typed)`,
+      body: "Lot status updated on the server.",
+      module: "quality-control",
+      link: { entity: "qc_inspections", id: qc.id },
+    });
+    return (await getService("qc_inspections").get(qc.id)) ?? qc;
+  }
+
   const checks = fillChecks(qc, result);
   const defects = checks.filter((c) => c.result === "Fail").length;
   const disposition = result === "Pass" ? "Release" : "Hold";

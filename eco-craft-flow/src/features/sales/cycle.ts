@@ -278,6 +278,58 @@ export async function fulfillSalesOrder(so: ErpRecord, step: "allocate" | "pick"
 
 export async function convertOrderToDelivery(so: ErpRecord): Promise<ErpRecord> {
   if (str(so, "packStatus") !== "Packed") throw new Error("Pack the order before creating a gate pass / challan.");
+
+  const typedSoId = str(so, "typedSalesOrderId") || str(so, "typedId");
+  if (typedSoId) {
+    const { apiFetch } = await import("@/services/api/client");
+    const { PHASE3_TYPED_API, postDispatchNote } = await import("@/services/api/phase3");
+    const { resolveDefaultCompanyId } = await import("@/services/api/crm");
+    const company = await resolveDefaultCompanyId();
+    const lines = (so.lines ?? [])
+      .filter((l) => l.id && !String(l.id).startsWith("l-") && !String(l.id).startsWith("sl-"))
+      .map((l) => ({
+        sales_order_line: l.id,
+        quantity: String(l.qty),
+      }));
+    if (!lines.length) {
+      throw new Error("Typed dispatch requires sales order line UUIDs from the server. Refresh the sales order list.");
+    }
+    const created = await apiFetch<{ id: string; document_number: string; status: string }>(
+      PHASE3_TYPED_API.dispatchNotes,
+      {
+        method: "POST",
+        body: { company, sales_order: typedSoId, lines },
+      },
+    );
+    await postDispatchNote(created.id);
+    await getService("sales_orders").update(so.id, {
+      fields: { ...so.fields, dispatchStatus: "Dispatched", typedDispatchId: created.id },
+    });
+    logAudit({
+      action: "convert",
+      module: "sales",
+      entity: "sales_orders",
+      recordId: so.id,
+      recordCode: so.code,
+      after: { delivery: created.document_number, typed: true },
+    });
+    const rows = await getService("deliveries").list();
+    return rows.find((r) => r.id === created.id) ?? {
+      id: created.id,
+      entity: "deliveries",
+      code: created.document_number,
+      title: created.document_number,
+      date: new Date().toISOString().slice(0, 10),
+      status: "posted" as const,
+      fields: { typedId: created.id, typedDispatchId: created.id, salesOrder: so.code },
+      lines: cloneLines(so.lines),
+      history: [],
+      links: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
   const gp = `GP-${Date.now().toString(36).toUpperCase().slice(-4)}`;
   const dn = await getService("deliveries").create({
     title: `Delivery Challan — ${str(so, "customerName") || so.title}`,
@@ -302,6 +354,47 @@ export async function convertOrderToDelivery(so: ErpRecord): Promise<ErpRecord> 
 }
 
 export async function convertDeliveryToInvoice(dn: ErpRecord): Promise<ErpRecord> {
+  const typedDispatchId = str(dn, "typedDispatchId") || str(dn, "typedId");
+  if (typedDispatchId) {
+    const { apiFetch } = await import("@/services/api/client");
+    const { PHASE3_TYPED_API, postSalesInvoice } = await import("@/services/api/phase3");
+    const { resolveDefaultCompanyId } = await import("@/services/api/crm");
+    const company = await resolveDefaultCompanyId();
+    const soRows = await getService("sales_orders").list();
+    const soCode = str(dn, "salesOrder");
+    const so =
+      soRows.find((r) => r.id === soCode || r.code === soCode) ||
+      soRows.find((r) => str(r, "typedDispatchId") === typedDispatchId);
+    const customer = str(so ?? ({} as ErpRecord), "customer");
+    if (!customer || !so) throw new Error("Cannot invoice typed dispatch without linked sales order/customer.");
+    const created = await apiFetch<{ id: string; document_number: string }>(PHASE3_TYPED_API.salesInvoices, {
+      method: "POST",
+      body: {
+        company,
+        customer,
+        sales_order: str(so, "typedId") || so.id,
+        dispatch_note: typedDispatchId,
+        lines: (so.lines ?? []).map((l) => ({
+          sales_order_line: l.id,
+          item: l.item,
+          quantity: String(l.qty),
+          unit_price: String(l.rate),
+        })),
+      },
+    });
+    await postSalesInvoice(created.id);
+    logAudit({
+      action: "convert",
+      module: "sales",
+      entity: "deliveries",
+      recordId: dn.id,
+      recordCode: dn.code,
+      after: { invoice: created.document_number, typed: true },
+    });
+    const rows = await getService("invoices").list();
+    return rows.find((r) => r.id === created.id) ?? dn;
+  }
+
   const soCode = str(dn, "salesOrder");
   const so = (db.get().records.sales_orders ?? []).find((r) => r.code === soCode);
   const inv = await getService("invoices").create({
