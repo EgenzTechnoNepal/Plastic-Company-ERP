@@ -62,6 +62,7 @@ import { Route as AppHrDepartmentsRouteImport } from './routes/_app.hr.departmen
 import { Route as AppHrEmployeesRouteImport } from './routes/_app.hr.employees'
 import { Route as AppHrLeaveRouteImport } from './routes/_app.hr.leave'
 import { Route as AppHrPayrollRouteImport } from './routes/_app.hr.payroll'
+import { Route as AppHrPayrollRunsRouteImport } from './routes/_app.hr.payroll-runs'
 import { Route as AppHrPerformanceRouteImport } from './routes/_app.hr.performance'
 import { Route as AppHrRecruitmentRouteImport } from './routes/_app.hr.recruitment'
 import { Route as AppIntegrationsIndexRouteImport } from './routes/_app.integrations.index'
@@ -452,6 +453,11 @@ const AppHrLeaveRoute = AppHrLeaveRouteImport.update({
 const AppHrPayrollRoute = AppHrPayrollRouteImport.update({
   id: '/payroll',
   path: '/payroll',
+  getParentRoute: () => AppHrRoute,
+} as any)
+const AppHrPayrollRunsRoute = AppHrPayrollRunsRouteImport.update({
+  id: '/payroll-runs',
+  path: '/payroll-runs',
   getParentRoute: () => AppHrRoute,
 } as any)
 const AppHrPerformanceRoute = AppHrPerformanceRouteImport.update({
@@ -1153,6 +1159,7 @@ export interface FileRoutesByFullPath {
   '/hr/employees': typeof AppHrEmployeesRoute
   '/hr/leave': typeof AppHrLeaveRoute
   '/hr/payroll': typeof AppHrPayrollRoute
+  '/hr/payroll-runs': typeof AppHrPayrollRunsRoute
   '/hr/performance': typeof AppHrPerformanceRoute
   '/hr/recruitment': typeof AppHrRecruitmentRoute
   '/integrations/banking': typeof AppIntegrationsBankingRoute
@@ -1319,6 +1326,7 @@ export interface FileRoutesByTo {
   '/hr/employees': typeof AppHrEmployeesRoute
   '/hr/leave': typeof AppHrLeaveRoute
   '/hr/payroll': typeof AppHrPayrollRoute
+  '/hr/payroll-runs': typeof AppHrPayrollRunsRoute
   '/hr/performance': typeof AppHrPerformanceRoute
   '/hr/recruitment': typeof AppHrRecruitmentRoute
   '/integrations/banking': typeof AppIntegrationsBankingRoute
@@ -1491,6 +1499,7 @@ export interface FileRoutesById {
   '/_app/hr/employees': typeof AppHrEmployeesRoute
   '/_app/hr/leave': typeof AppHrLeaveRoute
   '/_app/hr/payroll': typeof AppHrPayrollRoute
+  '/_app/hr/payroll-runs': typeof AppHrPayrollRunsRoute
   '/_app/hr/performance': typeof AppHrPerformanceRoute
   '/_app/hr/recruitment': typeof AppHrRecruitmentRoute
   '/_app/integrations/banking': typeof AppIntegrationsBankingRoute
@@ -1672,6 +1681,7 @@ export interface FileRouteTypes {
     | '/hr/employees'
     | '/hr/leave'
     | '/hr/payroll'
+    | '/hr/payroll-runs'
     | '/hr/performance'
     | '/hr/recruitment'
     | '/integrations/banking'
@@ -1838,6 +1848,7 @@ export interface FileRouteTypes {
     | '/hr/employees'
     | '/hr/leave'
     | '/hr/payroll'
+    | '/hr/payroll-runs'
     | '/hr/performance'
     | '/hr/recruitment'
     | '/integrations/banking'
@@ -2009,6 +2020,7 @@ export interface FileRouteTypes {
     | '/_app/hr/employees'
     | '/_app/hr/leave'
     | '/_app/hr/payroll'
+    | '/_app/hr/payroll-runs'
     | '/_app/hr/performance'
     | '/_app/hr/recruitment'
     | '/_app/integrations/banking'
@@ -2519,6 +2531,13 @@ declare module '@tanstack/react-router' {
       path: '/payroll'
       fullPath: '/hr/payroll'
       preLoaderRoute: typeof AppHrPayrollRouteImport
+      parentRoute: typeof AppHrRoute
+    }
+    '/_app/hr/payroll-runs': {
+      id: '/_app/hr/payroll-runs'
+      path: '/payroll-runs'
+      fullPath: '/hr/payroll-runs'
+      preLoaderRoute: typeof AppHrPayrollRunsRouteImport
       parentRoute: typeof AppHrRoute
     }
     '/_app/hr/performance': {
@@ -3535,6 +3554,7 @@ interface AppHrRouteChildren {
   AppHrEmployeesRoute: typeof AppHrEmployeesRoute
   AppHrLeaveRoute: typeof AppHrLeaveRoute
   AppHrPayrollRoute: typeof AppHrPayrollRoute
+  AppHrPayrollRunsRoute: typeof AppHrPayrollRunsRoute
   AppHrPerformanceRoute: typeof AppHrPerformanceRoute
   AppHrRecruitmentRoute: typeof AppHrRecruitmentRoute
   AppHrIndexRoute: typeof AppHrIndexRoute
@@ -3548,6 +3568,7 @@ const AppHrRouteChildren: AppHrRouteChildren = {
   AppHrEmployeesRoute: AppHrEmployeesRoute,
   AppHrLeaveRoute: AppHrLeaveRoute,
   AppHrPayrollRoute: AppHrPayrollRoute,
+  AppHrPayrollRunsRoute: AppHrPayrollRunsRoute,
   AppHrPerformanceRoute: AppHrPerformanceRoute,
   AppHrRecruitmentRoute: AppHrRecruitmentRoute,
   AppHrIndexRoute: AppHrIndexRoute,

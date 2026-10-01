@@ -28,6 +28,9 @@ export default defineConfig({
     host: listenHost,
     port: 8080,
     allowedHosts: [".trycloudflare.com", "localhost", "127.0.0.1"],
+    watch: {
+      usePolling: true,
+    },
     proxy: { ...proxy },
   },
   // Shared public links use `vite preview` (bundled assets) — Vite dev over

@@ -101,6 +101,9 @@ export function RecordDetailPage() {
       if (action === "cancel") await svc.cancel(record.id, reason ?? "Cancelled");
       if (action === "post") await svc.post(record.id);
       if (action === "reverse") await svc.reverse(record.id, reason ?? "Reversed");
+      if (action === "start") await svc.transition(record.id, "in_progress", "Started");
+      if (action === "complete") await svc.transition(record.id, "completed", "Marked complete");
+      if (action === "close") await svc.transition(record.id, "closed", "Closed");
       const done: Record<WorkflowAction, string> = {
         submit: "submitted",
         approve: "approved",
@@ -110,6 +113,9 @@ export function RecordDetailPage() {
         reverse: "reversed",
         edit: "updated",
         return: "returned",
+        start: "started",
+        complete: "completed",
+        close: "closed",
       };
       toast.success(`${record.code} ${done[action]}`);
     } catch (err) {
@@ -197,6 +203,27 @@ export function RecordDetailPage() {
                   <PermissionGuard action="reverse" module={module}>
                     <Button size="sm" variant="destructive" onClick={() => setConfirm("reverse")}>
                       Reverse
+                    </Button>
+                  </PermissionGuard>
+                )}
+                {actions.includes("start") && (
+                  <PermissionGuard action="edit" module={module}>
+                    <Button size="sm" onClick={() => run("start")}>
+                      Start
+                    </Button>
+                  </PermissionGuard>
+                )}
+                {actions.includes("complete") && (
+                  <PermissionGuard action="edit" module={module}>
+                    <Button size="sm" onClick={() => run("complete")}>
+                      Mark Complete
+                    </Button>
+                  </PermissionGuard>
+                )}
+                {actions.includes("close") && (
+                  <PermissionGuard action="edit" module={module}>
+                    <Button size="sm" variant="outline" onClick={() => run("close")}>
+                      Close
                     </Button>
                   </PermissionGuard>
                 )}

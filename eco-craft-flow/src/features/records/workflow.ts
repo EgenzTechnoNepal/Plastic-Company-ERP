@@ -1,7 +1,18 @@
 import type { EntityDef } from "@/features/registry/entities";
 import type { DocStatus, ErpRecord } from "@/types/erp";
 
-export type WorkflowAction = "edit" | "submit" | "approve" | "reject" | "return" | "cancel" | "post" | "reverse";
+export type WorkflowAction =
+  | "edit"
+  | "submit"
+  | "approve"
+  | "reject"
+  | "return"
+  | "cancel"
+  | "post"
+  | "reverse"
+  | "start"
+  | "complete"
+  | "close";
 
 const LOCKED: DocStatus[] = ["posted", "reversed", "cancelled", "completed", "closed"];
 
@@ -88,6 +99,18 @@ export function workflowActions(record: ErpRecord, def: EntityDef): WorkflowActi
   if (s === "approved" && set.has("posted")) actions.push("post");
 
   if (s === "posted" && set.has("reversed")) actions.push("reverse");
+
+  if (s === "draft" && set.has("in_progress") && !set.has("pending_approval") && !set.has("submitted")) {
+    actions.push("start");
+  }
+
+  if (s === "in_progress" && set.has("completed")) {
+    actions.push("complete");
+  }
+
+  if (s === "completed" && set.has("closed")) {
+    actions.push("close");
+  }
 
   if (set.has("cancelled") && !["cancelled", "reversed", "posted", "completed", "closed"].includes(s)) {
     actions.push("cancel");

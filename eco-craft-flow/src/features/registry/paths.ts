@@ -97,6 +97,7 @@ export function entityKeyFor(module: string, slug: string): string | undefined {
 }
 
 export function listPathFor(entity: string): string {
+  if (entity === "payroll_runs") return "/hr/payroll";
   const row = ENTITY_PATHS.find((p) => p.entity === entity && !SKIP_CANONICAL.has(p.slug));
   if (!row) {
     const fallback = ENTITY_PATHS.find((p) => p.entity === entity);
@@ -106,7 +107,9 @@ export function listPathFor(entity: string): string {
 }
 
 export function recordPath(entity: string, code: string): string {
-  return `${listPathFor(entity)}/${encodeURIComponent(code)}`;
+  const row = ENTITY_PATHS.find((p) => p.entity === entity);
+  const base = row ? `/${row.module}/${row.slug}` : listPathFor(entity);
+  return `${base}/${encodeURIComponent(code)}`;
 }
 
 export function recordEditPath(entity: string, code: string): string {
