@@ -41,3 +41,13 @@ PURCHASE_ORDER_AMENDED = "PurchaseOrderAmended"
 PURCHASE_ORDER_LINE_CANCELLED = "PurchaseOrderLineCancelled"
 SALES_ORDER_LINE_CANCELLED = "SalesOrderLineCancelled"
 SUPPLIER_BILL_APPROVED_FOR_AP = "SupplierBillApprovedForAp"
+
+# Phase B — CRM / Approvals
+CUSTOMER_CREATED = "CustomerCreated"
+CUSTOMER_UPDATED = "CustomerUpdated"
+CONTACT_CREATED = "ContactCreated"
+CRM_ACTIVITY_CREATED = "CRMActivityCreated"
+SUPPLIER_UPDATED = "SupplierUpdated"
+APPROVAL_REQUESTED = "ApprovalRequested"
+APPROVAL_APPROVED = "ApprovalApproved"
+APPROVAL_REJECTED = "ApprovalRejected"

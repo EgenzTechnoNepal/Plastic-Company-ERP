@@ -130,6 +130,18 @@ function pathFor(entity: string): string {
 }
 
 export async function listRecords(entity: string): Promise<ErpRecord[]> {
+  if (entity === "customers") {
+    const { listTypedCustomers } = await import("./crm");
+    return listTypedCustomers();
+  }
+  if (entity === "contacts") {
+    const { listTypedContacts } = await import("./crm");
+    return listTypedContacts();
+  }
+  if (entity === "activities") {
+    const { listTypedActivities } = await import("./crm");
+    return listTypedActivities();
+  }
   const { data } = await apiFetchMeta<RecordDto[]>(pathFor(entity), {
     query: { page_size: 200 },
     silent: true,
@@ -138,11 +150,29 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
+  if (entity === "customers" || entity === "contacts" || entity === "activities") {
+    const rows = await listRecords(entity);
+    const found = rows.find((r) => r.id === id || r.code === id);
+    if (!found) throw new ApiError("NOT_FOUND", "Not found", 404);
+    return found;
+  }
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/`, { silent: true });
   return toErpRecord(row);
 }
 
 export async function createRecord(entity: string, record: Partial<ErpRecord>): Promise<ErpRecord> {
+  if (entity === "customers") {
+    const { createTypedCustomer } = await import("./crm");
+    return createTypedCustomer(record);
+  }
+  if (entity === "contacts") {
+    const { createTypedContact } = await import("./crm");
+    return createTypedContact(record);
+  }
+  if (entity === "activities") {
+    const { createTypedActivity } = await import("./crm");
+    return createTypedActivity(record);
+  }
   const row = await apiFetch<RecordDto>(pathFor(entity), {
     method: "POST",
     body: fromErpRecord(record, entity),
@@ -152,6 +182,14 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
 }
 
 export async function updateRecord(entity: string, id: string, record: Partial<ErpRecord>): Promise<ErpRecord> {
+  if (entity === "customers") {
+    const { updateTypedCustomer } = await import("./crm");
+    return updateTypedCustomer(id, record);
+  }
+  if (entity === "contacts") {
+    const { updateTypedContact } = await import("./crm");
+    return updateTypedContact(id, record);
+  }
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/`, {
     method: "PATCH",
     body: fromErpRecord(record, entity),

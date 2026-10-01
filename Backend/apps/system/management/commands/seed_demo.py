@@ -68,6 +68,7 @@ class Command(BaseCommand):
             role_map = self._seed_rbac()
             self._seed_users(role_map)
             self._seed_records()
+            self._seed_typed_crm(company)
 
         self.stdout.write(self.style.SUCCESS(f"Demo data seeded for company '{company.name}'."))
 
@@ -125,7 +126,19 @@ class Command(BaseCommand):
                 )
 
         role_module_actions = {
-            "manager": (list(module_map.keys()), [Action.VIEW, Action.CREATE, Action.EDIT, Action.EXPORT, Action.PRINT]),
+            "manager": (
+                list(module_map.keys()),
+                [
+                    Action.VIEW,
+                    Action.CREATE,
+                    Action.EDIT,
+                    Action.EXPORT,
+                    Action.PRINT,
+                    Action.SUBMIT,
+                    Action.APPROVE,
+                    Action.REJECT,
+                ],
+            ),
             "sales": (["crm", "sales", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT, Action.SUBMIT]),
             "purchase": (["procurement", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT, Action.SUBMIT]),
             "warehouse": (["inventory", "warehouse", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT]),
@@ -214,3 +227,37 @@ class Command(BaseCommand):
                 code=code,
                 defaults={"title": title, "date": today, "status": status, "fields": fields, "lines": [], "history": [], "links": []},
             )
+
+    def _seed_typed_crm(self, company):
+        """Typed Customer/Contact foundation for Phase B (alongside DomainRecord samples)."""
+        from decimal import Decimal
+
+        from apps.crm.models import Contact, Customer
+
+        customer, _ = Customer.objects.get_or_create(
+            company=company,
+            code="CUST-001",
+            defaults={
+                "legal_name": "Everest Mart Pvt. Ltd.",
+                "trading_name": "Everest Mart",
+                "customer_type": "CORPORATE",
+                "country": "Nepal",
+                "address": "Itahari",
+                "phone": "+977-9800000001",
+                "email": "procurement@everestmart.example",
+                "credit_limit": Decimal("500000"),
+                "payment_terms": "30 Days",
+            },
+        )
+        Contact.objects.get_or_create(
+            company=company,
+            customer=customer,
+            name="Ramesh Karki",
+            defaults={
+                "designation": "Purchase Manager",
+                "email": "ramesh@everestmart.example",
+                "phone": "+977-9800000002",
+                "is_primary": True,
+                "preferred_channel": "email",
+            },
+        )

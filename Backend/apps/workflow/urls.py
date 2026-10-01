@@ -6,4 +6,6 @@ router = DefaultRouter()
 for entity, slug in views.ENTITIES:
     router.register(slug, views.VIEWSETS[entity], basename=slug)
 
+router.register("approval-requests", views.ApprovalRequestViewSet, basename="approval-request")
+
 urlpatterns = router.urls

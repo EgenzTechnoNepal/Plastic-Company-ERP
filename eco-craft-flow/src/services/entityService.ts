@@ -441,7 +441,47 @@ export function useNotifications(): NotificationItem[] {
   return useDb((s) => s.notifications);
 }
 export function useApprovals() {
-  return useDb((s) => s.approvals);
+  const mock = useDb((s) => s.approvals);
+  const live = useAuthStore((s) => s.source === "api");
+  const { data } = useQuery({
+    queryKey: ["typed-approvals"],
+    queryFn: async () => {
+      const { listTypedApprovals } = await import("@/services/api/crm");
+      const rows = await listTypedApprovals();
+      return rows.map(
+        (r): ApprovalRequest => ({
+          id: r.id,
+          entity: r.target_type.includes("Customer")
+            ? "customers"
+            : r.target_type.includes("PurchaseOrder")
+              ? "purchase_orders"
+              : r.module_code,
+          recordId: r.target_id,
+          recordCode: r.document_number || r.target_id,
+          documentType: r.title || r.target_type,
+          requester: String(r.requested_by ?? ""),
+          department: r.module_code,
+          amount: 0,
+          level: 1,
+          totalLevels: 1,
+          dueDate: r.requested_at?.slice(0, 10) ?? "",
+          priority: "normal",
+          status: r.status === "PENDING" ? "pending" : r.status === "APPROVED" ? "approved" : r.status === "REJECTED" ? "rejected" : "cancelled",
+          approverRole: "manager",
+          mode: "sequential",
+          createdAt: r.requested_at,
+          decidedAt: r.decided_at ?? undefined,
+          decidedBy: r.decided_by ? String(r.decided_by) : undefined,
+          reason: r.decision_reason,
+        }),
+      );
+    },
+    enabled: live,
+    staleTime: 10_000,
+    retry: 1,
+  });
+  // Prefer typed inbox when live; keep mock for offline / matrix demos
+  return live && data ? data : mock;
 }
 export function useApprovalRules() {
   return useDb((s) => s.approvalRules);
