@@ -21,25 +21,32 @@ import {
   RECORD_PATHS,
   updateRecord,
 } from "@/services/api/records";
-import { M2_DEMO_TYPED_ENTITIES } from "@/services/api/m2Typed";
+import { M2_DEMO_TYPED_ENTITIES, runTypedWorkflowAction } from "@/services/api/m2Typed";
+import { decideTypedApproval, listTypedApprovals, type ApprovalDto } from "@/services/api/crm";
 import { fetchAuditLogs } from "@/services/api/audit";
+import { invalidateLive } from "@/services/queryClient";
 
 const now = () => new Date().toISOString();
 const rid = (p: string) => `${p}-${Math.random().toString(36).slice(2, 9)}`;
 const EMPTY_RECORDS: ErpRecord[] = [];
+const EMPTY_AUDIT: AuditEvent[] = [];
+const EMPTY_APPROVALS: ApprovalRequest[] = [];
 
 function actor() {
   const u = useAuthStore.getState().user;
   return { name: u?.name ?? "Guest", role: u?.role ?? "guest" };
 }
 
+// Live sessions read audit and notifications from the server; the local store is offline-only.
 export function logAudit(e: Omit<AuditEvent, "id" | "at" | "user" | "role" | "ip">) {
+  if (isLiveSession()) return;
   const a = actor();
   const event: AuditEvent = { id: rid("aud"), at: now(), user: a.name, role: a.role, ip: "10.0.0.24", ...e };
   db.set((s) => ({ audit: [event, ...s.audit].slice(0, 800) }));
 }
 
 export function notify(n: Omit<NotificationItem, "id" | "at" | "read">) {
+  if (isLiveSession()) return;
   db.set((s) => ({ notifications: [{ id: rid("n"), at: now(), read: false, ...n }, ...s.notifications].slice(0, 300) }));
 }
 
@@ -72,6 +79,22 @@ export interface ServiceOptions {
 function liveEnabled(entity: string): boolean {
   return isLiveSession() && Boolean(RECORD_PATHS[entity]);
 }
+
+function liveTyped(entity: string): boolean {
+  return liveEnabled(entity) && M2_DEMO_TYPED_ENTITIES.has(entity);
+}
+
+function refreshLive(entity: string) {
+  invalidateLive(["records", entity], ["typed-approvals"], ["audit-logs"], ["dashboard-summary"]);
+}
+
+async function pendingTypedApproval(recordId: string): Promise<ApprovalDto | undefined> {
+  const rows = await listTypedApprovals("PENDING");
+  return rows.find((r) => r.target_id === recordId);
+}
+
+const LIVE_UNSUPPORTED_APPROVAL =
+  "is not supported by the server approval workflow yet. Approve, reject or cancel instead.";
 
 export function createEntityService(entity: string, opts: ServiceOptions = { module: entity }) {
   const rows = () => db.get().records[entity] ?? [];
@@ -122,7 +145,8 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (liveEnabled(entity)) {
         try {
           const created = await createRecord(entity, prepared);
-          write([created, ...rows().filter((r) => r.id !== created.id)]);
+          if (!M2_DEMO_TYPED_ENTITIES.has(entity)) write([created, ...rows().filter((r) => r.id !== created.id)]);
+          refreshLive(entity);
           return created;
         } catch (err) {
           if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
@@ -159,13 +183,12 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (liveEnabled(entity)) {
         try {
           const saved = await updateRecord(entity, before.id, updated);
-          write(rows().map((r) => (r.id === before.id || r.code === before.code ? saved : r)));
+          if (!M2_DEMO_TYPED_ENTITIES.has(entity)) {
+            write(rows().map((r) => (r.id === before.id || r.code === before.code ? saved : r)));
+          }
+          refreshLive(entity);
           return saved;
         } catch (err) {
-          // Typed list entities may not support DomainRecord PATCH — keep UI overlay only.
-          if (M2_DEMO_TYPED_ENTITIES.has(entity) && isMissingResource(err)) {
-            return updated;
-          }
           if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
         }
       }
@@ -179,9 +202,11 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (liveEnabled(entity)) {
         try {
           await deleteRecord(entity, before.id);
+          refreshLive(entity);
         } catch (err) {
-          if (!isMissingResource(err)) throw err;
+          if (M2_DEMO_TYPED_ENTITIES.has(entity) || !isMissingResource(err)) throw err;
         }
+        if (M2_DEMO_TYPED_ENTITIES.has(entity)) return;
       }
       write(rows().filter((r) => r.id !== before.id));
       logAudit({ action: "delete", module: opts.module, entity, recordId: before.id, recordCode: before.code, before: before.fields, reason });
@@ -191,6 +216,11 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (!before) throw new Error("Record not found");
       const def = getEntity(entity);
       if (def) assertTransition(before.status, status, def);
+      if (liveTyped(entity)) {
+        await runTypedWorkflowAction(entity, before.id, status, comment);
+        refreshLive(entity);
+        return getRecord(entity, before.id);
+      }
       if (liveEnabled(entity)) {
         const actionByStatus: Partial<Record<DocStatus, string>> = {
           pending_approval: "submit",
@@ -204,7 +234,9 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
         const action = actionByStatus[status];
         if (action) {
           try {
-            return await recordAction(entity, before.id, action, { comment, reason: comment, status });
+            const saved = await recordAction(entity, before.id, action, { comment, reason: comment, status });
+            refreshLive(entity);
+            return saved;
           } catch (err) {
             if (!isMissingResource(err)) throw err;
           }
@@ -229,6 +261,8 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (!r) throw new Error("Record not found");
       const def = getEntity(entity);
       if (!def) throw new Error("Unknown entity");
+      // Live: the server decides approval routing; browser approval rules are offline-only.
+      if (isLiveSession()) return svc.transition(id, submitTarget(def), comment ?? "Submitted for approval");
       const amount = recordTotal(r);
       const docType = def.documentType ?? def.label;
       const matched = rulesFor(docType, amount);
@@ -278,6 +312,15 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
       if (!r) throw new Error("Record not found");
       const def = getEntity(entity);
       if (!def) throw new Error("Unknown entity");
+      if (isLiveSession()) {
+        const typed = await pendingTypedApproval(r.id);
+        if (typed) {
+          await decideTypedApproval(typed.id, "approve", comment ?? "");
+          refreshLive(entity);
+          return r;
+        }
+        return svc.transition(id, approveTarget(def), comment ?? "Approved");
+      }
       const a = actor();
       const pending = db.get().approvals.filter(
         (ap) => (ap.recordId === r.id || ap.recordCode === r.code) && (ap.status === "pending" || ap.status === "delegated"),
@@ -334,6 +377,17 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
     },
     async reject(id: string, reason: string) {
       if (!reason?.trim()) throw new Error("Rejection reason is required");
+      if (isLiveSession()) {
+        const r = await svc.get(id);
+        if (!r) throw new Error("Record not found");
+        const typed = await pendingTypedApproval(r.id);
+        if (typed) {
+          await decideTypedApproval(typed.id, "reject", reason);
+          refreshLive(entity);
+          return r;
+        }
+        return svc.transition(id, "rejected", reason);
+      }
       const updated = await svc.transition(id, "rejected", reason);
       const a = actor();
       db.set((s) => ({
@@ -348,6 +402,7 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
     },
     async returnToSender(id: string, reason: string) {
       if (!reason?.trim()) throw new Error("Return reason is required");
+      if (isLiveSession()) throw new Error(`Return for information ${LIVE_UNSUPPORTED_APPROVAL}`);
       const def = getEntity(entity);
       if (!def) throw new Error("Unknown entity");
       const updated = await svc.transition(id, returnTarget(def), reason);
@@ -364,6 +419,7 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
     },
     async delegate(id: string, toName: string, reason?: string) {
       if (!toName.trim()) throw new Error("Delegate is required");
+      if (isLiveSession()) throw new Error(`Delegation ${LIVE_UNSUPPORTED_APPROVAL}`);
       const r = await svc.get(id);
       if (!r) throw new Error("Record not found");
       const a = actor();
@@ -381,6 +437,7 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
     async cancel(id: string, reason: string) {
       if (!reason?.trim()) throw new Error("Cancellation reason is required");
       const updated = await svc.transition(id, "cancelled", reason);
+      if (isLiveSession()) return updated;
       notify({
         type: "system",
         priority: "normal",
@@ -412,22 +469,41 @@ export type EntityService = ReturnType<typeof createEntityService>;
 
 /* ---------------- React hooks ---------------- */
 
-export function useRecords(entity: string): ErpRecord[] {
-  const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
+function useRecordsQuery(entity: string) {
   const live = useAuthStore((s) => s.source === "api");
-  const { data, isError } = useQuery({
+  const enabled = live && Boolean(RECORD_PATHS[entity]);
+  const query = useQuery({
     queryKey: ["records", entity],
     queryFn: () => listRecords(entity),
-    enabled: live && Boolean(RECORD_PATHS[entity]),
+    enabled,
     staleTime: 15_000,
     retry: 1,
   });
+  return { live, enabled, ...query };
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : "Request failed";
+}
+
+export function useRecords(entity: string): ErpRecord[] {
+  const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
+  const { live, data } = useRecordsQuery(entity);
   if (live && M2_DEMO_TYPED_ENTITIES.has(entity)) {
     // Never show localStorage mock stock/commercials while authenticated live.
-    if (isError) return EMPTY_RECORDS;
     return data ?? EMPTY_RECORDS;
   }
   return live && data ? data : mock;
+}
+
+/** Loading / error state for live server-backed lists (null error when offline or healthy). */
+export function useRecordsStatus(entity: string): { loading: boolean; error: string | null; retry: () => void } {
+  const { enabled, isLoading, error, refetch } = useRecordsQuery(entity);
+  return {
+    loading: enabled && isLoading,
+    error: enabled && error ? errorText(error) : null,
+    retry: () => void refetch(),
+  };
 }
 export function useRecord(entity: string, code: string): ErpRecord | undefined {
   const rows = useRecords(entity);
@@ -443,57 +519,99 @@ export function useAudit(): AuditEvent[] {
     staleTime: 10_000,
     retry: 1,
   });
-  return live && data ? data : mock;
+  if (live) return data ?? EMPTY_AUDIT;
+  return mock;
 }
 
 export function useInvalidateRecords() {
   return useQueryClient();
 }
+const EMPTY_NOTIFICATIONS: NotificationItem[] = [];
 export function useNotifications(): NotificationItem[] {
-  return useDb((s) => s.notifications);
-}
-export function useApprovals() {
-  const mock = useDb((s) => s.approvals);
+  const mock = useDb((s) => s.notifications);
   const live = useAuthStore((s) => s.source === "api");
-  const { data } = useQuery({
+  return live ? EMPTY_NOTIFICATIONS : mock;
+}
+const TYPED_TARGET_ENTITY: Record<string, string> = {
+  "crm.Customer": "customers",
+  "procurement.Supplier": "suppliers",
+  "procurement.PurchaseOrder": "purchase_orders",
+  "procurement.SupplierBill": "purchase_bills",
+  "sales.SalesOrder": "sales_orders",
+  "sales.SalesInvoice": "invoices",
+};
+
+const TYPED_APPROVAL_STATUS: Record<string, ApprovalRequest["status"]> = {
+  PENDING: "pending",
+  DRAFT: "pending",
+  APPROVED: "approved",
+  REJECTED: "rejected",
+  CANCELLED: "cancelled",
+};
+
+function typedApprovalToRequest(r: ApprovalDto): ApprovalRequest {
+  return {
+    id: r.id,
+    typed: true,
+    entity: TYPED_TARGET_ENTITY[r.target_type] ?? r.module_code,
+    recordId: r.target_id,
+    recordCode: r.document_number || r.target_id,
+    documentType: r.title || r.target_type,
+    requester: r.requested_by_email || "—",
+    department: r.module_code,
+    amount: 0,
+    level: 1,
+    totalLevels: 1,
+    dueDate: r.requested_at?.slice(0, 10) ?? "",
+    priority: "normal",
+    status: TYPED_APPROVAL_STATUS[r.status] ?? "pending",
+    approverRole: "manager",
+    mode: "sequential",
+    createdAt: r.requested_at,
+    decidedAt: r.decided_at ?? undefined,
+    decidedBy: r.decided_by_email || undefined,
+    reason: r.decision_reason || r.comments || undefined,
+  };
+}
+
+function useTypedApprovalsQuery() {
+  const live = useAuthStore((s) => s.source === "api");
+  const query = useQuery({
     queryKey: ["typed-approvals"],
-    queryFn: async () => {
-      const { listTypedApprovals } = await import("@/services/api/crm");
-      const rows = await listTypedApprovals();
-      return rows.map(
-        (r): ApprovalRequest => ({
-          id: r.id,
-          entity: r.target_type.includes("Customer")
-            ? "customers"
-            : r.target_type.includes("PurchaseOrder")
-              ? "purchase_orders"
-              : r.module_code,
-          recordId: r.target_id,
-          recordCode: r.document_number || r.target_id,
-          documentType: r.title || r.target_type,
-          requester: String(r.requested_by ?? ""),
-          department: r.module_code,
-          amount: 0,
-          level: 1,
-          totalLevels: 1,
-          dueDate: r.requested_at?.slice(0, 10) ?? "",
-          priority: "normal",
-          status: r.status === "PENDING" ? "pending" : r.status === "APPROVED" ? "approved" : r.status === "REJECTED" ? "rejected" : "cancelled",
-          approverRole: "manager",
-          mode: "sequential",
-          createdAt: r.requested_at,
-          decidedAt: r.decided_at ?? undefined,
-          decidedBy: r.decided_by ? String(r.decided_by) : undefined,
-          reason: r.decision_reason,
-        }),
-      );
-    },
+    queryFn: async () => (await listTypedApprovals()).map(typedApprovalToRequest),
     enabled: live,
     staleTime: 10_000,
     retry: 1,
   });
-  // Prefer typed inbox when live; keep mock for offline / matrix demos
-  return live && data ? data : mock;
+  return { live, ...query };
+}
+
+export function useApprovals(): ApprovalRequest[] {
+  const mock = useDb((s) => s.approvals);
+  const { live, data } = useTypedApprovalsQuery();
+  // Live: typed ApprovalRequest is the only authority; mock store is offline-only.
+  if (live) return data ?? EMPTY_APPROVALS;
+  return mock;
+}
+
+export function useApprovalsStatus(): { live: boolean; loading: boolean; error: string | null; retry: () => void } {
+  const { live, isLoading, error, refetch } = useTypedApprovalsQuery();
+  return {
+    live,
+    loading: live && isLoading,
+    error: live && error ? errorText(error) : null,
+    retry: () => void refetch(),
+  };
+}
+
+/** Decide a typed approval by its ApprovalRequest id (live inbox). */
+export async function decideApproval(
+  approvalId: string,
+  decision: "approve" | "reject" | "cancel",
+  reason = "",
+): Promise<void> {
+  await decideTypedApproval(approvalId, decision, reason);
+  invalidateLive(["typed-approvals"], ["audit-logs"], ["dashboard-summary"]);
 }
 export function useApprovalRules() {
   return useDb((s) => s.approvalRules);

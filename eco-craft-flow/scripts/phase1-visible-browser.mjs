@@ -3,8 +3,9 @@
  * Watch the Chrome window on your desktop.
  */
 import { chromium } from "playwright";
+import { FE_BASE as BASE, demoCredentials } from "./demo-env.mjs";
 
-const BASE = process.env.FE_BASE || "http://127.0.0.1:8081";
+const CREDS = demoCredentials();
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 console.log("Opening VISIBLE Chrome window… watch your taskbar / desktop.");
@@ -26,9 +27,9 @@ try {
   console.log("STEP 1: Login page");
   await page.goto(`${BASE}/login`, { waitUntil: "domcontentloaded" });
   await pause(2500);
-  await page.locator('input[type="email"]').fill("admin@ecowrap.com");
+  await page.locator('input[type="email"]').fill(CREDS.email);
   await pause(800);
-  await page.locator('input[type="password"]').fill("admin123");
+  await page.locator('input[type="password"]').fill(CREDS.password);
   await pause(800);
   await page.getByRole("button", { name: /^Sign in$/i }).click();
   await page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 45000 });

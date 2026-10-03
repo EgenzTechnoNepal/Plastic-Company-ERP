@@ -1,4 +1,5 @@
 import { apiFetch, apiFetchMeta, ApiError } from "./client";
+import { isTypedEntity, typedUnavailable } from "./typedEntities";
 import type { DocStatus, ErpRecord, LineItem, StatusEvent } from "@/types/erp";
 
 /** Django path (under /api/v1) for each frontend entity key. */
@@ -155,26 +156,7 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
-  if (
-    entity === "customers" ||
-    entity === "contacts" ||
-    entity === "activities" ||
-    [
-      "suppliers",
-      "products",
-      "warehouses",
-      "bins",
-      "purchase_orders",
-      "gate_entries",
-      "grns",
-      "purchase_bills",
-      "sales_orders",
-      "deliveries",
-      "invoices",
-      "qc_inspections",
-      "stock_movements",
-    ].includes(entity)
-  ) {
+  if (isTypedEntity(entity)) {
     const rows = await listRecords(entity);
     const found = rows.find((r) => r.id === id || r.code === id);
     if (!found) throw new ApiError("NOT_FOUND", "Not found", 404);
@@ -209,6 +191,7 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedLetterOfCredit } = await import("./m2Typed");
     return createTypedLetterOfCredit(record);
   }
+  if (isTypedEntity(entity)) throw typedUnavailable(entity, "Creating records");
   const row = await apiFetch<RecordDto>(pathFor(entity), {
     method: "POST",
     body: fromErpRecord(record, entity),
@@ -226,6 +209,7 @@ export async function updateRecord(entity: string, id: string, record: Partial<E
     const { updateTypedContact } = await import("./crm");
     return updateTypedContact(id, record);
   }
+  if (isTypedEntity(entity)) throw typedUnavailable(entity, "Editing records");
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/`, {
     method: "PATCH",
     body: fromErpRecord(record, entity),
@@ -235,10 +219,12 @@ export async function updateRecord(entity: string, id: string, record: Partial<E
 }
 
 export async function deleteRecord(entity: string, id: string): Promise<void> {
+  if (isTypedEntity(entity)) throw typedUnavailable(entity, "Deleting records");
   await apiFetch(`${pathFor(entity)}${id}/`, { method: "DELETE", silent: true });
 }
 
 export async function recordAction(entity: string, id: string, action: string, body?: Record<string, unknown>): Promise<ErpRecord> {
+  if (isTypedEntity(entity)) throw typedUnavailable(entity, `The "${action}" action`);
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/${action}/`, {
     method: "POST",
     body: body ?? {},

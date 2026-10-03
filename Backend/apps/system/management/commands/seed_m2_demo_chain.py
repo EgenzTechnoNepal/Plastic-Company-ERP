@@ -1,18 +1,22 @@
 """
-python manage.py seed_m2_demo_chain
+python manage.py seed_m2_demo_chain [--full]
 
 Deterministic typed Milestone 2 demo chain for Ecowrap Nepal:
 
-  masters → PO → Gate → GRN (QC_HOLD) → QC PASS (AVAILABLE)
-  → Landed cost → optional SO → reserve → dispatch → invoice
+  company/users/roles → masters → PO → PI → LC (DOCS_CLEARED) → Gate → GRN (QC_HOLD bin)
+  → QC PASS (AVAILABLE) → Landed cost → Putaway to RM-01 → Supplier bill
+  --full adds: SO → reserve → dispatch → invoice
 
-Safe to re-run (get_or_create / document-number guards). Refuses when DEBUG=False.
+Every step runs through the domain services (no direct status writes), so the LC gate,
+QC gate, ledger and reservation rules apply exactly as they do in the UI.
 
-Also callable from seed_demo via seed_m2_demo_chain.run(...).
+Safe to re-run: each step is guarded by a fixed document number and skipped when present.
+Refuses when DEBUG=False. Also callable from seed_demo via run(...).
 """
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -20,24 +24,34 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
-from apps.accounts.models import User
+from apps.accounts.models import User, UserRole
 from apps.crm.models import Contact, Customer
 from apps.inventory.landed_post import post_landed_cost
 from apps.inventory.models import (
+    InventoryLot,
     Item,
     ItemType,
-    InventoryLot,
     LandedCostCategory,
     LandedCostDocument,
     LotStatus,
     UnitOfMeasure,
 )
 from apps.inventory.services import create_landed_component
-from apps.organization.models import Company, Currency
+from apps.organization.models import Currency
 from apps.procurement.bill_services import add_bill_line, create_supplier_bill, match_supplier_bill, post_supplier_bill
 from apps.procurement.inbound import GateEntry, GateEntryStatus, GoodsReceiptLine, GoodsReceiptNote
-from apps.procurement.inbound_services import post_grn
-from apps.procurement.models import Incoterm, Supplier
+from apps.procurement.inbound_services import post_grn, submit_gate_entry
+from apps.procurement.lc_services import (
+    attach_draft_lc_scan,
+    create_letter_of_credit,
+    create_proforma_invoice,
+    issue_final_lc,
+    mark_manufacturing,
+    record_seller_draft_ok,
+    run_draft_lc_match,
+    verify_pre_dispatch_packet,
+)
+from apps.procurement.models import Incoterm, PurchaseOrder, Supplier
 from apps.procurement.po_services import (
     add_po_line,
     approve_purchase_order,
@@ -45,15 +59,23 @@ from apps.procurement.po_services import (
     mark_po_sent,
     submit_purchase_order,
 )
-from apps.quality.qc import QCInspection
+from apps.procurement.trade_finance import (
+    LetterOfCredit,
+    LetterOfCreditStatus,
+    ProformaInvoice,
+    ProformaInvoiceStatus,
+)
+from apps.quality.qc import QCInspection, QCInspectionStatus
 from apps.quality.qc_services import pass_inspection
 from apps.sales.dispatch_services import add_dispatch_line, create_dispatch_note, post_dispatch
 from apps.sales.invoice_services import add_invoice_line, create_sales_invoice, post_sales_invoice
 from apps.sales.so_services import add_so_line, confirm_sales_order, create_sales_order
 from apps.warehouse.models import Bin, BinType, Warehouse
+from apps.warehouse.operations import OpsDocStatus, PutawayOrder
+from apps.warehouse.ops_services import post_putaway
 
 
-# Deterministic demo codes (spec §8)
+# Deterministic demo codes (spec §8) — referenced by the client demo runbook.
 SUP_CN = "SUP-CN-PLA"
 SUP_NP = "SUP-NP-PKG"
 CUST_A = "CUST-A"
@@ -66,29 +88,155 @@ SKU_FG_A = "FG-A-001"
 SKU_FG_B = "FG-B-001"
 WH_CODE = "WH-RM"
 BIN_RECV = "RECV-01"
+BIN_QC = "QC-HOLD"
 BIN_RM = "RM-01"
 PO_DOC = "PO-M2-DEMO-001"
+PI_DOC = "PI-M2-DEMO-001"
+LC_DOC = "LC-M2-DEMO-001"
 GATE_DOC = "GE-M2-DEMO-001"
 GRN_DOC = "GRN-M2-DEMO-001"
 QC_DOC = "QC-M2-DEMO-001"
 LOT_DOC = "LOT-M2-PLA-001"
 LCD_DOC = "LCD-M2-DEMO-001"
+PUT_DOC = "PUT-M2-DEMO-001"
 BILL_DOC = "BILL-M2-DEMO-001"
-SO_DOC_PREFIX = "SO-M2"  # actual number from numbering service; we tag notes
+SO_DOC = "SO-M2-DEMO-001"
+DN_DOC = "DN-M2-DEMO-001"
+INV_DOC = "INV-M2-DEMO-001"
+
+PLA_QTY = Decimal("100")
+PLA_PRICE = Decimal("1000")
+LC_REQUIRED_DOCS = ["commercial_invoice", "packing_list", "bill_of_lading", "coa"]
+
+
+def _rename(obj, field: str, value: str) -> None:
+    """Pin a service-generated document number to the deterministic demo code."""
+    type(obj).objects.filter(pk=obj.pk).update(**{field: value})
+    obj.refresh_from_db()
+
+
+def _ensure_company_and_users():
+    """Organization, RBAC catalogue and demo users (idempotent; shared with seed_demo)."""
+    from apps.system.management.commands.seed_demo import Command as SeedDemo
+
+    helper = SeedDemo()
+    company = helper._seed_organization()
+    role_map = helper._seed_rbac()
+    helper._seed_users(role_map)
+    return company
+
+
+def _ensure_trade_finance(*, company, po, user) -> tuple[ProformaInvoice, LetterOfCredit]:
+    """PI + LC for the demo PO, walked through every LC step to DOCS_CLEARED."""
+    pi = ProformaInvoice.objects.filter(company=company, document_number=PI_DOC).first()
+    if pi is None:
+        pi = create_proforma_invoice(
+            company=company,
+            purchase_order=po,
+            user=user,
+            status=ProformaInvoiceStatus.ACCEPTED,
+            seller_pi_number="CN-PI-2026-0418",
+            currency_code="NPR",
+            total_amount=PLA_QTY * PLA_PRICE,
+            payment_terms="LC at sight",
+            lead_time_days=30,
+            notes="M2 demo proforma — PLA 100 KG",
+        )
+        _rename(pi, "document_number", PI_DOC)
+
+    lc = LetterOfCredit.objects.filter(company=company, document_number=LC_DOC).first()
+    if lc is None:
+        today = timezone.now().date()
+        lc = create_letter_of_credit(
+            company=company,
+            purchase_order=po,
+            proforma_invoice=pi,
+            user=user,
+            bank_name="Demo Commercial Bank Ltd.",
+            currency_code="NPR",
+            amount=pi.total_amount,
+            latest_shipment_date=today + timedelta(days=30),
+            expiry_date=today + timedelta(days=60),
+            notes="M2 demo LC",
+        )
+        _rename(lc, "document_number", LC_DOC)
+
+    for _ in range(10):
+        lc.refresh_from_db()
+        status = lc.status
+        if status == LetterOfCreditStatus.DOCS_CLEARED:
+            break
+        if status == LetterOfCreditStatus.DRAFT:
+            attach_draft_lc_scan(
+                lc,
+                extracted={
+                    "amount": str(pi.total_amount),
+                    "currency": "NPR",
+                    "beneficiary": po.supplier.legal_name,
+                },
+                user=user,
+            )
+        elif status in {LetterOfCreditStatus.DRAFT_LC_SCANNED, LetterOfCreditStatus.AI_MATCH_FAILED}:
+            run_draft_lc_match(lc, user=user)
+            lc.refresh_from_db()
+            if lc.status != LetterOfCreditStatus.AI_MATCH_PASSED:
+                raise CommandError(f"Demo LC match failed: {lc.match_result}")
+        elif status == LetterOfCreditStatus.AI_MATCH_PASSED:
+            record_seller_draft_ok(lc, note="Seller confirmed draft LC terms.", user=user)
+        elif status == LetterOfCreditStatus.SELLER_APPROVED:
+            issue_final_lc(lc, final_lc_number="DCB-LC-DEMO-0001", user=user)
+        elif status == LetterOfCreditStatus.FINAL_ISSUED:
+            mark_manufacturing(lc, user=user)
+        elif status in {
+            LetterOfCreditStatus.MANUFACTURING,
+            LetterOfCreditStatus.DOCS_PENDING,
+            LetterOfCreditStatus.DOCS_BLOCKED,
+        }:
+            verify_pre_dispatch_packet(lc, present_keys=LC_REQUIRED_DOCS, user=user)
+        else:
+            raise CommandError(f"Demo LC is {status}; cannot reach DOCS_CLEARED.")
+    lc.refresh_from_db()
+    if lc.status != LetterOfCreditStatus.DOCS_CLEARED:
+        raise CommandError(f"Demo LC stuck at {lc.status}.")
+    return pi, lc
+
+
+def _assert_inbound_linked(*, po, pi, lc, grn, lot, inspection, lcd, putaway, bill) -> None:
+    """Existing demo documents are reused by number, so verify they still form one chain."""
+    gate = grn.gate_entry
+    grn_po_ids = {
+        line.purchase_order_line.purchase_order_id
+        for line in grn.lines.select_related("purchase_order_line")
+        if line.purchase_order_line_id
+    }
+    checks = {
+        f"{PI_DOC} -> {PO_DOC}": pi.purchase_order_id == po.id,
+        f"{LC_DOC} -> {PO_DOC}": lc.purchase_order_id == po.id,
+        f"{LC_DOC} -> {PI_DOC}": lc.proforma_invoice_id == pi.id,
+        f"{GATE_DOC} -> {PO_DOC}": gate is not None and gate.purchase_order_id == po.id,
+        f"{GRN_DOC} lines -> {PO_DOC}": grn_po_ids == {po.id},
+        f"{QC_DOC} -> {LOT_DOC}": inspection.lot_id == lot.id,
+        f"{LCD_DOC} -> {LOT_DOC}": lcd.lot_id == lot.id,
+        f"{PUT_DOC} -> {LOT_DOC}": putaway is None or putaway.lot_id == lot.id,
+        f"{BILL_DOC} -> {PO_DOC}/{GRN_DOC}": bill is None or (bill.purchase_order_id == po.id and bill.grn_id == grn.id),
+    }
+    broken = [name for name, ok in checks.items() if not ok]
+    if broken:
+        raise CommandError(
+            "Demo chain in this database is not linked end to end (left over from an older seed run): "
+            + ", ".join(broken)
+            + ". Reset the local demo database, then re-run seed_demo and seed_m2_demo_chain."
+        )
 
 
 def run(*, interactive: bool = True, user: User | None = None) -> dict:
     """
     Seed typed M2 chain. Returns ids/codes for verification.
 
-    interactive=True  → stop after AVAILABLE + landed (+ bill matched); outbound left for live demo
+    interactive=True  → stop after AVAILABLE + landed + putaway (+ bill matched); outbound left for live demo
     interactive=False → also SO → reserve → dispatch → invoice (regression / full reset)
     """
-    company = Company.objects.filter(name__icontains="Ecowrap").first()
-    if company is None:
-        company = Company.objects.first()
-    if company is None:
-        raise CommandError("No company found. Run seed_demo first.")
+    company = _ensure_company_and_users()
 
     if user is None:
         user = User.objects.filter(email="admin@ecowrap.com").first() or User.objects.filter(is_superuser=True).first()
@@ -215,15 +363,28 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
         company=company, code=WH_CODE, defaults={"name": "Raw Material Store"}
     )
     bin_recv, _ = Bin.objects.get_or_create(
-        warehouse=warehouse, code=BIN_RECV, defaults={"bin_type": BinType.RECEIVING}
+        warehouse=warehouse, code=BIN_RECV, defaults={"bin_type": BinType.RECEIVING, "name": "Receiving Dock"}
     )
     Bin.objects.get_or_create(
-        warehouse=warehouse, code=BIN_RM, defaults={"bin_type": BinType.RAW_MATERIAL}
+        warehouse=warehouse, code=BIN_QC, defaults={"bin_type": BinType.QC_HOLD, "name": "QC Hold"}
+    )
+    bin_rm, _ = Bin.objects.get_or_create(
+        warehouse=warehouse, code=BIN_RM, defaults={"bin_type": BinType.RAW_MATERIAL, "name": "Raw Material Rack 01"}
     )
 
-    # --- Inbound commercial chain (idempotent on GRN number) ---
-    grn = GoodsReceiptNote.objects.filter(company=company, grn_number=GRN_DOC).first()
-    if grn is None:
+    # --- Purchase order ---
+    po = PurchaseOrder.objects.filter(company=company, document_number=PO_DOC).first()
+    if po is None:
+        # Older seed versions left the PO on its service-generated number; adopt it via the demo gate.
+        legacy_gate = (
+            GateEntry.objects.filter(company=company, gate_entry_number=GATE_DOC)
+            .exclude(purchase_order=None)
+            .first()
+        )
+        if legacy_gate is not None:
+            po = legacy_gate.purchase_order
+            _rename(po, "document_number", PO_DOC)
+    if po is None:
         po = create_purchase_order(
             company=company,
             supplier=supplier_cn,
@@ -235,37 +396,44 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             payment_terms="LC 30 Days",
             notes="M2 demo PO — PLA 100 KG",
         )
-        # Force stable document number for demo scripts when newly created
-        if not PurchaseOrder_has_demo_tag(po):
-            PurchaseOrder = po.__class__
-            PurchaseOrder.objects.filter(pk=po.pk).update(document_number=PO_DOC, notes=po.notes or "M2 demo PO")
-            po.refresh_from_db()
-
-        line = add_po_line(
+        _rename(po, "document_number", PO_DOC)
+        add_po_line(
             purchase_order=po,
             item=pla,
             uom=kg,
-            ordered_quantity=Decimal("100"),
+            ordered_quantity=PLA_QTY,
             user=user,
-            unit_price=Decimal("1000"),
+            unit_price=PLA_PRICE,
             tax_pct=Decimal("0"),
             destination_warehouse=warehouse,
         )
         submit_purchase_order(purchase_order=po, user=user)
         approve_purchase_order(purchase_order=po, user=user)
         mark_po_sent(purchase_order=po, user=user)
+    line = po.lines.filter(item=pla).first()
 
-        gate = GateEntry.objects.create(
-            company=company,
-            gate_entry_number=GATE_DOC,
-            entry_at=timezone.now(),
-            supplier=supplier_cn,
-            purchase_order=po,
-            vehicle_number="Ba 2 Kha 1234",
-            driver_name="Ram Bahadur",
-            status=GateEntryStatus.SUBMITTED,
-            remarks="M2 demo gate",
-        )
+    # --- PI / LC: must be DOCS_CLEARED before the LC gate lets the truck in ---
+    pi, lc = _ensure_trade_finance(company=company, po=po, user=user)
+
+    # --- Gate → GRN (lot lands in QC_HOLD bin, draft inspection auto-created) ---
+    grn = GoodsReceiptNote.objects.filter(company=company, grn_number=GRN_DOC).first()
+    if grn is None:
+        gate = GateEntry.objects.filter(company=company, gate_entry_number=GATE_DOC).first()
+        if gate is None:
+            gate = GateEntry.objects.create(
+                company=company,
+                gate_entry_number=GATE_DOC,
+                entry_at=timezone.now(),
+                supplier=supplier_cn,
+                purchase_order=po,
+                vehicle_number="Ko 1 Ja 2468",
+                driver_name="Ram Bahadur",
+                remarks="M2 demo gate",
+                created_by=user,
+                updated_by=user,
+            )
+        if gate.status == GateEntryStatus.DRAFT:
+            gate = submit_gate_entry(gate=gate, user=user)
         grn = GoodsReceiptNote.objects.create(
             company=company,
             grn_number=GRN_DOC,
@@ -276,40 +444,48 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             received_at=timezone.now(),
             currency=npr,
             notes="M2 demo GRN",
+            created_by=user,
+            updated_by=user,
         )
         GoodsReceiptLine.objects.create(
             grn=grn,
             item=pla,
             uom=kg,
-            received_quantity=Decimal("100"),
-            accepted_quantity=Decimal("100"),
-            purchase_unit_cost=Decimal("1000"),
+            received_quantity=PLA_QTY,
+            accepted_quantity=PLA_QTY,
+            purchase_unit_cost=PLA_PRICE,
             lot_number=LOT_DOC,
             purchase_order_line=line,
         )
         post_grn(grn=grn, user=user)
-    else:
-        po = grn.gate_entry.purchase_order if grn.gate_entry_id else None
-        line = grn.lines.first().purchase_order_line if grn.lines.exists() else None
 
     lot = InventoryLot.objects.filter(company=company, lot_number=LOT_DOC).first()
     if lot is None:
         raise CommandError(f"Expected lot {LOT_DOC} after GRN post.")
 
+    # --- QC: reuse the inspection post_grn opened, pin its number, attach CoA ---
     inspection = QCInspection.objects.filter(company=company, inspection_number=QC_DOC).first()
     if inspection is None:
-        inspection = QCInspection.objects.create(
-            company=company,
-            inspection_number=QC_DOC,
-            grn=grn,
-            lot=lot,
-            item=pla,
-            remarks="M2 demo incoming QC",
+        inspection = (
+            QCInspection.objects.filter(company=company, lot=lot, status=QCInspectionStatus.DRAFT)
+            .order_by("created_at")
+            .first()
         )
-    if lot.status == LotStatus.QC_HOLD:
+        if inspection is None:
+            inspection = QCInspection.objects.create(
+                company=company, inspection_number=QC_DOC, grn=grn, lot=lot, item=pla
+            )
+        QCInspection.objects.filter(pk=inspection.pk).update(
+            inspection_number=QC_DOC,
+            remarks="M2 demo incoming QC — visual, MFI and moisture within spec",
+            coa_reference=inspection.coa_reference or "COA-CN-PLA-0418",
+        )
+        inspection.refresh_from_db()
+    if lot.status == LotStatus.QC_HOLD and inspection.status == QCInspectionStatus.DRAFT:
         pass_inspection(inspection=inspection, user=user)
         lot.refresh_from_db()
 
+    # --- Landed cost: NPR 100,000 + 28,000 extras → 128,000 / 100 KG = NPR 1,280/KG ---
     lcd = LandedCostDocument.objects.filter(company=company, document_number=LCD_DOC).first()
     if lcd is None:
         lcd = LandedCostDocument.objects.create(
@@ -317,54 +493,48 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             document_number=LCD_DOC,
             lot=lot,
             currency=npr,
-            purchase_quantity=Decimal("100"),
-            purchase_unit_cost=Decimal("1000"),
-            purchase_value=Decimal("100000"),
+            purchase_quantity=PLA_QTY,
+            purchase_unit_cost=PLA_PRICE,
+            purchase_value=PLA_QTY * PLA_PRICE,
             notes="M2 demo landed cost",
         )
-        # NPR 28,000 extras → landed 128,000 / 100 KG = 1,280
-        create_landed_component(
-            lcd,
-            category=LandedCostCategory.INTERNATIONAL_FREIGHT,
-            amount=Decimal("12000"),
-            currency=npr,
-            exchange_rate=Decimal("1"),
-        )
-        create_landed_component(
-            lcd,
-            category=LandedCostCategory.INSURANCE,
-            amount=Decimal("3000"),
-            currency=npr,
-            exchange_rate=Decimal("1"),
-        )
-        create_landed_component(
-            lcd,
-            category=LandedCostCategory.CUSTOMS_DUTY,
-            amount=Decimal("8000"),
-            currency=npr,
-            exchange_rate=Decimal("1"),
-        )
-        create_landed_component(
-            lcd,
-            category=LandedCostCategory.CLEARING,
-            amount=Decimal("2000"),
-            currency=npr,
-            exchange_rate=Decimal("1"),
-        )
-        create_landed_component(
-            lcd,
-            category=LandedCostCategory.NEPAL_TRANSPORT,
-            amount=Decimal("3000"),
-            currency=npr,
-            exchange_rate=Decimal("1"),
-        )
+        for category, amount in (
+            (LandedCostCategory.INTERNATIONAL_FREIGHT, "12000"),
+            (LandedCostCategory.INSURANCE, "3000"),
+            (LandedCostCategory.CUSTOMS_DUTY, "8000"),
+            (LandedCostCategory.CLEARING, "2000"),
+            (LandedCostCategory.NEPAL_TRANSPORT, "3000"),
+        ):
+            create_landed_component(
+                lcd, category=category, amount=Decimal(amount), currency=npr, exchange_rate=Decimal("1")
+            )
         post_landed_cost(document=lcd, user=user)
+        lot.refresh_from_db()
 
-    # Supplier bill + server match (optional demo credibility)
+    # --- Putaway: QC-released stock moves from the QC hold bin to the raw-material rack ---
+    putaway = PutawayOrder.objects.filter(company=company, putaway_number=PUT_DOC).first()
+    if putaway is None and lot.status == LotStatus.AVAILABLE and lot.bin_id != bin_rm.id:
+        putaway = PutawayOrder.objects.create(
+            company=company,
+            putaway_number=PUT_DOC,
+            lot=lot,
+            from_bin=lot.bin,
+            to_warehouse=warehouse,
+            to_bin=bin_rm,
+            quantity=lot.remaining_quantity,
+            notes="M2 demo putaway after QC pass",
+            created_by=user,
+            updated_by=user,
+        )
+    if putaway is not None and putaway.status == OpsDocStatus.DRAFT:
+        post_putaway(putaway=putaway, user=user)
+        lot.refresh_from_db()
+
+    # --- Supplier bill + server-side 3-way match ---
     from apps.procurement.commercial import SupplierBill
 
     bill = SupplierBill.objects.filter(company=company, document_number=BILL_DOC).first()
-    if bill is None and po is not None and line is not None:
+    if bill is None and line is not None:
         bill = create_supplier_bill(
             company=company,
             supplier=supplier_cn,
@@ -375,14 +545,13 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             supplier_invoice_number="CN-INV-M2-001",
             notes="M2 demo supplier bill",
         )
-        SupplierBill.objects.filter(pk=bill.pk).update(document_number=BILL_DOC)
-        bill.refresh_from_db()
+        _rename(bill, "document_number", BILL_DOC)
         add_bill_line(
             bill=bill,
             item=pla,
             uom=kg,
-            quantity=Decimal("100"),
-            unit_price=Decimal("1000"),
+            quantity=PLA_QTY,
+            unit_price=PLA_PRICE,
             user=user,
             purchase_order_line=line,
             grn_line=grn.lines.first(),
@@ -390,19 +559,34 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
         match_supplier_bill(bill=bill, user=user)
         post_supplier_bill(bill=bill, user=user)
 
+    _assert_inbound_linked(
+        po=po, pi=pi, lc=lc, grn=grn, lot=lot, inspection=inspection, lcd=lcd, putaway=putaway, bill=bill
+    )
+
     result = {
         "company_id": str(company.id),
+        "users": sorted(
+            f"{ur.user.email}:{ur.role.code}"
+            for ur in UserRole.objects.select_related("user", "role").filter(user__email__endswith="@ecowrap.com")
+        ),
         "supplier": SUP_CN,
         "customer": CUST_A,
         "item": SKU_PLA,
         "warehouse": WH_CODE,
-        "po": PO_DOC,
+        "bins": [BIN_RECV, BIN_QC, BIN_RM],
+        "po": po.document_number,
+        "pi": pi.document_number,
+        "lc": lc.document_number,
+        "lc_status": lc.status,
         "gate": GATE_DOC,
         "grn": GRN_DOC,
+        "qc": QC_DOC,
         "lot": LOT_DOC,
         "lot_status": lot.status,
-        "qc": QC_DOC,
+        "lot_bin": lot.bin.code if lot.bin_id else None,
         "landed": LCD_DOC,
+        "landed_unit_cost": str(lot.landed_unit_cost),
+        "putaway": PUT_DOC if putaway else None,
         "bill": BILL_DOC if bill else None,
         "interactive": interactive,
     }
@@ -410,11 +594,11 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
     if interactive:
         return result
 
-    # Full outbound for regression / non-interactive reset
-    from apps.sales.commercial import SalesOrder
+    # --- Full outbound for regression / non-interactive reset ---
+    from apps.sales.commercial import DispatchNote, SalesInvoice, SalesOrder
 
-    existing_so = SalesOrder.objects.filter(company=company, notes__contains="M2 demo SO").first()
-    if existing_so is None:
+    so = SalesOrder.objects.filter(company=company, document_number=SO_DOC).first()
+    if so is None:
         so = create_sales_order(
             company=company,
             customer=cust_a,
@@ -423,7 +607,8 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             currency=npr,
             notes="M2 demo SO — sell 25 KG PLA",
         )
-        so_line = add_so_line(
+        _rename(so, "document_number", SO_DOC)
+        add_so_line(
             sales_order=so,
             item=pla,
             uom=kg,
@@ -433,9 +618,17 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             unit_price=Decimal("1800"),
         )
         confirm_sales_order(sales_order=so, user=user)
+    so_line = so.lines.filter(item=pla).first()
+
+    dn = DispatchNote.objects.filter(company=company, document_number=DN_DOC).first()
+    if dn is None:
         dn = create_dispatch_note(sales_order=so, user=user, warehouse=warehouse, notes="M2 demo dispatch")
+        _rename(dn, "document_number", DN_DOC)
         add_dispatch_line(dispatch=dn, sales_order_line=so_line, quantity=Decimal("25"), user=user)
         post_dispatch(dispatch=dn, user=user)
+
+    inv = SalesInvoice.objects.filter(company=company, document_number=INV_DOC).first()
+    if inv is None:
         inv = create_sales_invoice(
             company=company,
             customer=cust_a,
@@ -445,6 +638,7 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             currency=npr,
             notes="M2 demo invoice",
         )
+        _rename(inv, "document_number", INV_DOC)
         add_invoice_line(
             invoice=inv,
             item=pla,
@@ -455,25 +649,13 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
             sales_order_line=so_line,
         )
         post_sales_invoice(invoice=inv, user=user)
-        result.update(
-            {
-                "sales_order": so.document_number,
-                "dispatch": dn.document_number,
-                "invoice": inv.document_number,
-            }
-        )
-    else:
-        result["sales_order"] = existing_so.document_number
 
+    result.update({"sales_order": SO_DOC, "dispatch": DN_DOC, "invoice": INV_DOC})
     return result
 
 
-def PurchaseOrder_has_demo_tag(po) -> bool:
-    return po.document_number == PO_DOC or (po.notes or "").startswith("M2 demo")
-
-
 class Command(BaseCommand):
-    help = "Seed typed Milestone 2 demo chain (PO→QC→Landed; optional full outbound)."
+    help = "Seed typed Milestone 2 demo chain (PO→PI/LC→Gate→GRN→QC→Landed→Putaway; --full adds outbound)."
 
     def add_arguments(self, parser):
         parser.add_argument(

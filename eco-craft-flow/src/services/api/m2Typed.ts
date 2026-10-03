@@ -8,27 +8,9 @@ import type { DocStatus, ErpRecord, LineItem } from "@/types/erp";
 import { PHASE2_TYPED_API } from "./phase2";
 import { PHASE3_TYPED_API } from "./phase3";
 
-/** Entities that must not silently fall back to mock/localStorage in live sessions. */
-export const M2_DEMO_TYPED_ENTITIES = new Set([
-  "suppliers",
-  "products",
-  "warehouses",
-  "bins",
-  "purchase_orders",
-  "proforma_invoices",
-  "letters_of_credit",
-  "gate_entries",
-  "grns",
-  "purchase_bills",
-  "sales_orders",
-  "deliveries",
-  "invoices",
-  "qc_inspections",
-  "stock_movements",
-  "customers",
-  "contacts",
-  "activities",
-]);
+import { typedUnavailable } from "./typedEntities";
+
+export { M2_DEMO_TYPED_ENTITIES } from "./typedEntities";
 
 export const M2_TYPED_PATHS = {
   vendors: `${API_V1}/purchase/vendors/`,
@@ -771,6 +753,57 @@ export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | n
     default:
       return null;
   }
+}
+
+/**
+ * Server workflow endpoints reachable from the generic record actions.
+ * Anything not listed is rejected — never simulated in the browser.
+ */
+const TYPED_WORKFLOW_ACTIONS: Record<string, Partial<Record<DocStatus, (id: string) => string>>> = {
+  purchase_orders: {
+    submitted: PHASE3_TYPED_API.purchaseOrderSubmit,
+    pending_approval: PHASE3_TYPED_API.purchaseOrderSubmit,
+    approved: PHASE3_TYPED_API.purchaseOrderApprove,
+    cancelled: PHASE3_TYPED_API.purchaseOrderCancel,
+    closed: PHASE3_TYPED_API.purchaseOrderClose,
+  },
+  gate_entries: {
+    submitted: PHASE2_TYPED_API.gateSubmit,
+    cancelled: PHASE2_TYPED_API.gateCancel,
+  },
+  grns: { posted: PHASE2_TYPED_API.grnPost },
+  purchase_bills: {
+    approved: PHASE3_TYPED_API.supplierBillApproveForAp,
+    posted: PHASE3_TYPED_API.supplierBillPost,
+  },
+  sales_orders: {
+    approved: PHASE3_TYPED_API.salesOrderConfirm,
+    cancelled: PHASE3_TYPED_API.salesOrderCancel,
+  },
+  deliveries: { posted: PHASE3_TYPED_API.dispatchNotePost },
+  invoices: {
+    posted: PHASE3_TYPED_API.salesInvoicePost,
+    cancelled: PHASE3_TYPED_API.salesInvoiceCancel,
+  },
+};
+
+export function hasTypedWorkflowAction(entity: string, status: DocStatus): boolean {
+  return Boolean(TYPED_WORKFLOW_ACTIONS[entity]?.[status]);
+}
+
+export async function runTypedWorkflowAction(
+  entity: string,
+  id: string,
+  status: DocStatus,
+  reason?: string,
+): Promise<void> {
+  const url = TYPED_WORKFLOW_ACTIONS[entity]?.[status];
+  if (!url) throw typedUnavailable(entity, `Moving to "${status.replace(/_/g, " ")}"`);
+  await apiFetch(url(id), {
+    method: "POST",
+    body: reason ? { reason, comment: reason } : {},
+    silent: true,
+  });
 }
 
 const PRODUCT_TYPE_TO_ITEM: Record<string, { itemType: string; prefix: string; qc: boolean }> = {

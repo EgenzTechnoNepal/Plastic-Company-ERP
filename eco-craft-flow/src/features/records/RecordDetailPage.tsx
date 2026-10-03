@@ -43,7 +43,9 @@ import { LcWorkflowPanel } from "@/features/purchase/LcWorkflowPanel";
 import { LcGateGuardBanner } from "@/features/purchase/LcGateGuardBanner";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
-import { logView, useApprovals, useAudit, useRecord } from "@/services/entityService";
+import { isLiveSession } from "@/store/auth";
+import { isTypedEntity } from "@/services/api/typedEntities";
+import { logView, useApprovals, useAudit, useRecord, useRecordsStatus } from "@/services/entityService";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -66,6 +68,7 @@ export function RecordDetailPage() {
   const entity = entityKeyFor(module, slug) ?? "";
   const def = getEntity(entity);
   const record = useRecord(entity, code);
+  const loadStatus = useRecordsStatus(entity);
   const audit = useAudit().filter((e) => e.recordId === record?.id || e.recordCode === code);
   const approvals = useApprovals().filter((a) => a.recordId === record?.id || a.recordCode === code);
   const [confirm, setConfirm] = useState<Extract<WorkflowAction, "reject" | "cancel" | "reverse" | "return"> | null>(null);
@@ -77,11 +80,20 @@ export function RecordDetailPage() {
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
   }
+  if (!record && loadStatus.loading) {
+    return <p className="py-12 text-center text-sm text-muted-foreground">Loading {code}…</p>;
+  }
   if (!record) {
     return (
       <EmptyState
-        title="Record not found"
-        description={`${code} is not in the local store.`}
+        title={loadStatus.error ? "Could not load record" : "Record not found"}
+        description={
+          loadStatus.error
+            ? `${code}: ${loadStatus.error}`
+            : isLiveSession()
+              ? `${code} was not found on the server for your company.`
+              : `${code} is not in the local store.`
+        }
         action={
           <Button asChild variant="outline">
             <Link to={listPathFor(entity) as never}>Back to {def.label}</Link>
@@ -93,6 +105,8 @@ export function RecordDetailPage() {
 
   const svc = getService(entity);
   const actions = workflowActions(record, def);
+  // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
+  const localPanels = !(isLiveSession() && isTypedEntity(entity));
   const list = listPathFor(entity);
 
   const run = async (action: WorkflowAction, reason?: string) => {
@@ -146,11 +160,15 @@ export function RecordDetailPage() {
                     <Link to={`${recordPath(entity, record.code)}/preview` as never}>Preview</Link>
                   </Button>
                 )}
-                <CycleActions entity={entity} record={record} module={module} />
-                <PurchaseCycleActions entity={entity} record={record} module={module} />
-                <WarehouseCycleActions entity={entity} record={record} module={module} />
-                <ProductionCycleActions entity={entity} record={record} module={module} />
-                <QualityCycleActions entity={entity} record={record} module={module} />
+                {localPanels && (
+                  <>
+                    <CycleActions entity={entity} record={record} module={module} />
+                    <PurchaseCycleActions entity={entity} record={record} module={module} />
+                    <WarehouseCycleActions entity={entity} record={record} module={module} />
+                    <ProductionCycleActions entity={entity} record={record} module={module} />
+                    <QualityCycleActions entity={entity} record={record} module={module} />
+                  </>
+                )}
                 {actions.includes("edit") && (
                   <PermissionGuard action="edit" module={module}>
                     <Button size="sm" variant="outline" className="gap-1.5" asChild>
@@ -251,11 +269,11 @@ export function RecordDetailPage() {
               </Card>
             ))}
             {entity === "customers" && <Customer360 customer={record} />}
-            {entity === "products" && <Product360 product={record} />}
+            {localPanels && entity === "products" && <Product360 product={record} />}
             {entity === "tickets" && <SlaClock ticket={record} />}
-            {entity === "sales_orders" && <FulfillmentPanel order={record} />}
+            {localPanels && entity === "sales_orders" && <FulfillmentPanel order={record} />}
             {entity === "rfqs" && <RfqCompare rfq={record} />}
-            {entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
+            {localPanels && entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}
             {(entity === "gate_entries" || entity === "grns") && <LcGateGuardBanner record={record} />}
             {entity === "letters_of_credit" && (
@@ -285,12 +303,12 @@ export function RecordDetailPage() {
                     toast.success("QC updated — refresh list if status looks stale");
                   }}
                 />
-                <InspectionChecks qc={record} />
+                {localPanels && <InspectionChecks qc={record} />}
               </>
             )}
             {entity === "quality_plans" && <PlanSpec plan={record} />}
             {entity === "capas" && <CapaPipeline capa={record} />}
-            {entity === "suppliers" && <SupplierScorecard supplier={record} />}
+            {localPanels && entity === "suppliers" && <SupplierScorecard supplier={record} />}
             {def.lines && record.lines.length > 0 && (
               <Card className="rounded-2xl border-border/60">
                 <CardHeader className="pb-2">

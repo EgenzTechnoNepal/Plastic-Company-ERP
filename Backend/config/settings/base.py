@@ -122,7 +122,7 @@ if env.bool("DEV_USE_SQLITE", default=False):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            "NAME": env("DEV_SQLITE_PATH", default=str(BASE_DIR / "db.sqlite3")),
         }
     }
 else:

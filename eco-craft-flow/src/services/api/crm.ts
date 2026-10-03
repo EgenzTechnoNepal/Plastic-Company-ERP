@@ -86,8 +86,10 @@ export type ApprovalDto = {
   title: string;
   status: string;
   requested_by?: string | null;
+  requested_by_email?: string;
   requested_at: string;
   decided_by?: string | null;
+  decided_by_email?: string;
   decided_at?: string | null;
   comments?: string;
   decision_reason?: string;
@@ -336,9 +338,9 @@ export async function createTypedActivity(partial: Partial<ErpRecord>): Promise<
   return activityToErp(row);
 }
 
-export async function listTypedApprovals(): Promise<ApprovalDto[]> {
+export async function listTypedApprovals(status?: string): Promise<ApprovalDto[]> {
   const { data } = await apiFetchMeta<ApprovalDto[] | { results: ApprovalDto[] }>(CRM_TYPED_API.approvals, {
-    query: { page_size: 200, status: "PENDING" },
+    query: status ? { page_size: 200, status } : { page_size: 200 },
     silent: true,
   });
   return unwrapList<ApprovalDto>(data);
@@ -346,7 +348,7 @@ export async function listTypedApprovals(): Promise<ApprovalDto[]> {
 
 export async function decideTypedApproval(
   id: string,
-  decision: "approve" | "reject",
+  decision: "approve" | "reject" | "cancel",
   reason = "",
 ): Promise<ApprovalDto> {
   return apiFetch<ApprovalDto>(`${CRM_TYPED_API.approvals}${id}/${decision}/`, {

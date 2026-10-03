@@ -29,7 +29,7 @@ import { recordPath } from "@/features/registry/paths";
 import { getEntity } from "@/features/registry/entities";
 import { canDecide, isEscalated } from "@/features/workflow/approvals";
 import { getService } from "@/services/catalog";
-import { useApprovalRules, useApprovals } from "@/services/entityService";
+import { decideApproval, useApprovalRules, useApprovals, useApprovalsStatus } from "@/services/entityService";
 import { DEMO_ACCOUNTS, useAuthStore } from "@/store/auth";
 import type { ApprovalRequest } from "@/types/erp";
 import { cn } from "@/lib/utils";
@@ -39,18 +39,19 @@ export const Route = createFileRoute("/_app/approvals/")({
 });
 
 type FilterKey = "mine" | "pending" | "escalated" | "decided";
-type Decision = "reject" | "return" | "delegate";
+type Decision = "reject" | "return" | "delegate" | "cancel";
 
 function tone(status: ApprovalRequest["status"]) {
   if (status === "approved") return "success" as const;
   if (status === "rejected") return "danger" as const;
-  if (status === "returned") return "warning" as const;
+  if (status === "cancelled") return "neutral" as const;
   return "warning" as const;
 }
 
 function ApprovalInboxPage() {
   const user = useAuthStore((s) => s.user);
   const rows = useApprovals();
+  const status = useApprovalsStatus();
   const rules = useApprovalRules();
   const [filter, setFilter] = useState<FilterKey>("mine");
   const [confirm, setConfirm] = useState<{ action: Decision; row: ApprovalRequest } | null>(null);
@@ -58,7 +59,8 @@ function ApprovalInboxPage() {
 
   const mine = rows.filter((r) => canDecide(r, user));
   const pending = rows.filter((r) => r.status === "pending");
-  const escalated = pending.filter((r) => isEscalated(r, rules));
+  // Escalation hours come from browser-side rules, so they only apply to offline requests.
+  const escalated = pending.filter((r) => !r.typed && isEscalated(r, rules));
   const decided = rows.filter((r) => r.status !== "pending");
 
   const visible = useMemo(() => {
@@ -69,13 +71,26 @@ function ApprovalInboxPage() {
   }, [filter, mine, pending, escalated, decided]);
 
   const run = async (row: ApprovalRequest, action: "approve" | Decision, reason?: string) => {
+    const done = { approve: "approved", reject: "rejected", return: "returned", delegate: "delegated", cancel: "cancelled" } as const;
+    if (row.typed) {
+      try {
+        if (action !== "approve" && action !== "reject" && action !== "cancel") {
+          throw new Error("Return and delegate are not supported by the server approval workflow yet.");
+        }
+        await decideApproval(row.id, action, reason ?? "");
+        toast.success(`${row.recordCode} ${done[action]}`);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Action failed");
+      }
+      return;
+    }
     const svc = getService(row.entity);
     try {
       if (action === "approve") await svc.approve(row.recordId);
       if (action === "reject") await svc.reject(row.recordId, reason ?? "Rejected");
       if (action === "return") await svc.returnToSender(row.recordId, reason ?? "Returned");
       if (action === "delegate") await svc.delegate(row.recordId, delegateTo || "", reason);
-      const done = { approve: "approved", reject: "rejected", return: "returned", delegate: "delegated" } as const;
+      if (action === "cancel") await svc.cancel(row.recordId, reason ?? "Cancelled");
       toast.success(`${row.recordCode} ${done[action]}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
@@ -111,13 +126,31 @@ function ApprovalInboxPage() {
         </div>
       </div>
 
-      {visible.length === 0 ? (
-        <EmptyState title="Nothing in this queue" description="Submit a quotation, leave request or stock adjustment to generate an approval." />
+      {status.error && (
+        <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+          <span>Could not load approval requests from the server: {status.error}</span>
+          <Button size="sm" variant="outline" onClick={status.retry}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {status.loading ? (
+        <p className="py-8 text-center text-sm text-muted-foreground">Loading approval requests…</p>
+      ) : visible.length === 0 ? (
+        <EmptyState
+          title="Nothing in this queue"
+          description={
+            status.live
+              ? "No server approval requests in this view."
+              : "Submit a quotation, leave request or stock adjustment to generate an approval."
+          }
+        />
       ) : (
         <div className="space-y-3">
           {visible.map((row) => {
             const def = getEntity(row.entity);
-            const late = isEscalated(row, rules);
+            const late = !row.typed && isEscalated(row, rules);
             const href = recordPath(row.entity, row.recordCode);
             const canAct = canDecide(row, user) && row.status === "pending";
             return (
@@ -131,13 +164,28 @@ function ApprovalInboxPage() {
                       <StatusBadge tone={tone(row.status)}>{row.status}</StatusBadge>
                       {late && row.status === "pending" && <StatusBadge tone="danger">escalated</StatusBadge>}
                     </div>
-                    <p className="mt-1 text-sm">
-                      {row.documentType} · {row.department} · {npr(row.amount)}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {row.requester} · level {row.level}/{row.totalLevels} · {row.mode ?? "sequential"} · {row.approverRole}
-                      {row.delegatedTo ? ` · delegated to ${row.delegatedTo}` : ""} · due {row.dueDate}
-                    </p>
+                    {row.typed ? (
+                      <>
+                        <p className="mt-1 text-sm">
+                          {row.documentType} · {row.department}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Requested by {row.requester} on {row.dueDate}
+                          {row.decidedBy ? ` · decided by ${row.decidedBy}` : ""}
+                          {row.decidedAt ? ` on ${row.decidedAt.slice(0, 10)}` : ""}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="mt-1 text-sm">
+                          {row.documentType} · {row.department} · {npr(row.amount)}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {row.requester} · level {row.level}/{row.totalLevels} · {row.mode ?? "sequential"} · {row.approverRole}
+                          {row.delegatedTo ? ` · delegated to ${row.delegatedTo}` : ""} · due {row.dueDate}
+                        </p>
+                      </>
+                    )}
                     {row.reason && <p className="mt-1 text-xs">{row.reason}</p>}
                   </div>
                   {canAct && (
@@ -149,12 +197,20 @@ function ApprovalInboxPage() {
                         <Button size="sm" variant="outline" onClick={() => setConfirm({ action: "reject", row })}>
                           Reject
                         </Button>
-                        <Button size="sm" variant="outline" className="gap-1" onClick={() => setConfirm({ action: "return", row })}>
-                          <RotateCcw className="h-3.5 w-3.5" /> Return
-                        </Button>
-                        <Button size="sm" variant="outline" className="gap-1" onClick={() => { setDelegateTo(others[0]?.name ?? ""); setConfirm({ action: "delegate", row }); }}>
-                          <UserPlus className="h-3.5 w-3.5" /> Delegate
-                        </Button>
+                        {row.typed ? (
+                          <Button size="sm" variant="ghost" onClick={() => setConfirm({ action: "cancel", row })}>
+                            Cancel request
+                          </Button>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="outline" className="gap-1" onClick={() => setConfirm({ action: "return", row })}>
+                              <RotateCcw className="h-3.5 w-3.5" /> Return
+                            </Button>
+                            <Button size="sm" variant="outline" className="gap-1" onClick={() => { setDelegateTo(others[0]?.name ?? ""); setConfirm({ action: "delegate", row }); }}>
+                              <UserPlus className="h-3.5 w-3.5" /> Delegate
+                            </Button>
+                          </>
+                        )}
                       </div>
                     </PermissionGuard>
                   )}
@@ -168,10 +224,16 @@ function ApprovalInboxPage() {
       <ConfirmDialog
         open={confirm !== null && confirm.action !== "delegate"}
         onOpenChange={(o) => !o && setConfirm(null)}
-        title={confirm?.action === "reject" ? "Reject document" : "Return for information"}
+        title={
+          confirm?.action === "reject"
+            ? "Reject document"
+            : confirm?.action === "cancel"
+              ? "Cancel approval request"
+              : "Return for information"
+        }
         description="The requester is notified. A reason is required."
         requireReason
-        confirmLabel={confirm?.action === "reject" ? "Reject" : "Return"}
+        confirmLabel={confirm?.action === "reject" ? "Reject" : confirm?.action === "cancel" ? "Cancel request" : "Return"}
         tone="destructive"
         onConfirm={async (reason) => {
           if (confirm) await run(confirm.row, confirm.action, reason);

@@ -1,7 +1,14 @@
+"""LC flow smoke. Usage: DEMO_EMAIL=... DEMO_PASSWORD=... [API_BASE=...] python scripts/phase1_api_smoke.py"""
 import json
+import os
+import sys
 import urllib.request
 
-BASE = "http://127.0.0.1:8000/api/v1"
+BASE = os.environ.get("API_BASE", "http://127.0.0.1:8000/api/v1")
+EMAIL = os.environ.get("DEMO_EMAIL")
+PASSWORD = os.environ.get("DEMO_PASSWORD")
+if not EMAIL or not PASSWORD:
+    sys.exit("Set DEMO_EMAIL and DEMO_PASSWORD (and optionally API_BASE) before running this script.")
 
 
 def call(method, url, token=None, body=None):
@@ -17,7 +24,7 @@ def call(method, url, token=None, body=None):
 login = call(
     "POST",
     f"{BASE}/auth/login/",
-    body={"email": "admin@ecowrap.com", "password": "admin123"},
+    body={"email": EMAIL, "password": PASSWORD},
 )
 token = login.get("access") or login.get("data", {}).get("access")
 assert token, f"no token: {login}"

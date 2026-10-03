@@ -64,14 +64,14 @@ export function applyBulkSeed({ push, rec, makeLine, FG, RM }: SeedCtx) {
       })),
   );
 
-  [
+  ([
     ["ADJ-002", "Shrinkage — FG garbage bags", "WH-FG", "Shrinkage", -1560],
     ["ADJ-003", "Count variance — corn bags", "WH-FG", "Count variance", -1680],
     ["ADJ-004", "Moisture loss — PLA resin", "WH-RM", "Moisture loss", -2240],
     ["ADJ-005", "Found stock — starch", "WH-RM", "Found stock", 870],
     ["ADJ-006", "Damaged wrap film write-off", "WH-FG", "Damage", -19200],
     ["ADJ-007", "Reclassification — masterbatch", "WH-RM", "Reclassification", 0],
-  ].forEach(([code, title, wh, reason, val], i) =>
+  ] as [string, string, string, string, number][]).forEach(([code, title, wh, reason, val], i) =>
     push(
       "stock_adjustments",
       rec("stock_adjustments", code as string, title as string, `2026-08-${10 + i}`, i % 2 ? "approved" : "pending_approval", {
@@ -318,14 +318,14 @@ export function applyBulkSeed({ push, rec, makeLine, FG, RM }: SeedCtx) {
     makeLine({ item: RM[3].code, description: RM[3].name, uom: "KG", qty: 2, rate: 620 }),
   ]));
 
-  [
+  ([
     ["MI-002", "Material Issue — WO-002", "WO-002", 2400],
     ["MI-003", "Material Issue — WO-004", "WO-004", 1200],
     ["MI-004", "Material Issue — WO-005", "WO-005", 900],
     ["MI-005", "Material Issue — WO-006", "WO-006", 1800],
     ["MI-006", "Backflush — WO-001 scrap", "WO-001", 80],
     ["MI-007", "Material Issue — WO-007 draft", "WO-007", 0],
-  ].forEach(([code, title, wo, qty], i) =>
+  ] as [string, string, string, number][]).forEach(([code, title, wo, qty], i) =>
     push(
       "material_issues",
       rec("material_issues", code as string, title as string, `2026-08-${11 + i}`, qty > 0 ? "completed" : "draft", {
@@ -810,14 +810,14 @@ export function applyBulkSeed({ push, rec, makeLine, FG, RM }: SeedCtx) {
   );
 
   /* ========== ACCOUNTING ========== */
-  [
+  ([
     ["EXP-002", "Diesel — factory generators", "Freight & Transport", 42000],
     ["EXP-003", "Office rent — Kathmandu", "Utilities", 85000],
     ["EXP-004", "QC lab consumables", "Utilities", 18000],
     ["EXP-005", "Vehicle maintenance", "Freight & Transport", 32000],
     ["EXP-006", "Internet & telecom", "Utilities", 12000],
     ["EXP-007", "Safety equipment purchase", "Utilities", 28000],
-  ].forEach(([code, title, cat, amt], i) =>
+  ] as [string, string, string, number][]).forEach(([code, title, cat, amt], i) =>
     push("expenses", rec("expenses", code as string, title as string, `2026-08-${5 + i}`, "approved", {
       category: cat, account: cat.includes("Freight") ? "5400" : "5300", amount: amt,
       paidBy: i % 2 ? "Cash in Hand" : "Nabil Bank", branch: i % 2 ? "Factory — Bhaktapur" : "Head Office — Kathmandu",

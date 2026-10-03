@@ -24,6 +24,15 @@ VIEWSETS = {
 
 
 class ApprovalRequestSerializer(serializers.ModelSerializer):
+    requested_by_email = serializers.SerializerMethodField()
+    decided_by_email = serializers.SerializerMethodField()
+
+    def get_requested_by_email(self, obj) -> str:
+        return obj.requested_by.email if obj.requested_by_id else ""
+
+    def get_decided_by_email(self, obj) -> str:
+        return obj.decided_by.email if obj.decided_by_id else ""
+
     class Meta:
         model = ApprovalRequest
         fields = [
@@ -36,8 +45,10 @@ class ApprovalRequestSerializer(serializers.ModelSerializer):
             "title",
             "status",
             "requested_by",
+            "requested_by_email",
             "requested_at",
             "decided_by",
+            "decided_by_email",
             "decided_at",
             "comments",
             "decision_reason",

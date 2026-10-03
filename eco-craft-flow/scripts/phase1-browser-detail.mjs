@@ -1,8 +1,9 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { FE_BASE as BASE, demoCredentials } from "./demo-env.mjs";
 
-const BASE = process.env.FE_BASE || "http://127.0.0.1:8081";
+const CREDS = demoCredentials();
 const OUT = path.resolve("phase1-browser-shots");
 fs.mkdirSync(OUT, { recursive: true });
 const log = [];
@@ -18,14 +19,8 @@ page.setDefaultTimeout(60000);
 
 async function login() {
   await page.goto(`${BASE}/login`, { waitUntil: "networkidle" });
-  // Click demo admin chip if present
-  const adminChip = page.getByText("admin@ecowrap.com").first();
-  if (await adminChip.count()) {
-    await adminChip.click();
-    await page.waitForTimeout(300);
-  }
-  await page.locator('input[type="email"]').fill("admin@ecowrap.com");
-  await page.locator('input[type="password"]').fill("admin123");
+  await page.locator('input[type="email"]').fill(CREDS.email);
+  await page.locator('input[type="password"]').fill(CREDS.password);
   await Promise.all([
     page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 45000 }).catch(() => null),
     page.getByRole("button", { name: /^Sign in$/i }).click(),

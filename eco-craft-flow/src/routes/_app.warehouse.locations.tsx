@@ -26,7 +26,7 @@ function LocationsPage() {
             </Link>
           </Button>
           <Button size="sm" className="gap-1.5" asChild>
-            <Link to="/warehouse/warehouses/new">
+            <Link to="/warehouse/$entity/new" params={{ entity: "warehouses" }}>
               <Plus className="h-3.5 w-3.5" />
               New Warehouse
             </Link>

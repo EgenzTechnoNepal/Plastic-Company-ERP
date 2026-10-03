@@ -6,7 +6,8 @@ import { getEntity } from "@/features/registry/entities";
 import { npr } from "@/lib/export";
 import { getField, num, searchRecord, statusLabel, statusTone, str } from "@/lib/records";
 import { recordPath } from "@/features/registry/paths";
-import { recordTotal, useRecords } from "@/services/entityService";
+import { recordTotal, useRecords, useRecordsStatus } from "@/services/entityService";
+import { Button } from "@/components/ui/button";
 import type { ErpRecord } from "@/types/erp";
 
 export interface EntityKpi {
@@ -48,6 +49,7 @@ function plainValue(row: ErpRecord, key: string, type?: string): string | number
 export function EntityListPage({ entity, kpis, filter, extraFilters = [], exportName }: EntityListPageProps) {
   const def = getEntity(entity);
   const all = useRecords(entity);
+  const status = useRecordsStatus(entity);
   const rows = filter ? all.filter(filter) : all;
   if (!def) return <p className="text-sm text-muted-foreground">Unknown entity: {entity}</p>;
 
@@ -73,11 +75,27 @@ export function EntityListPage({ entity, kpis, filter, extraFilters = [], export
           ))}
         </div>
       )}
+      {status.error && (
+        <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+          <span>
+            Could not load {def.label.toLowerCase()} from the server: {status.error}
+          </span>
+          <Button size="sm" variant="outline" onClick={status.retry}>
+            Retry
+          </Button>
+        </div>
+      )}
       <DataListPage
         rows={rows}
         rowKey={(r) => r.id}
         exportName={exportName ?? entity}
-        emptyMessage={`No ${def.label.toLowerCase()} match your filters.`}
+        emptyMessage={
+          status.loading
+            ? `Loading ${def.label.toLowerCase()}…`
+            : status.error
+              ? `${def.label} unavailable — see the error above.`
+              : `No ${def.label.toLowerCase()} match your filters.`
+        }
         searchPlaceholder={`Search ${def.label.toLowerCase()}…`}
         search={(r, q) => searchRecord(r, q, searchKeys)}
         rowHref={(r) => recordPath(entity, r.code)}

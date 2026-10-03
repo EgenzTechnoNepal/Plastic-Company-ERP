@@ -1,8 +1,9 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { FE_BASE as BASE, demoCredentials } from "./demo-env.mjs";
 
-const BASE = "http://127.0.0.1:8081";
+const CREDS = demoCredentials();
 const OUT = path.resolve("phase1-browser-shots");
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -11,8 +12,8 @@ const page = await (await browser.newContext({ viewport: { width: 1440, height: 
 page.setDefaultTimeout(45000);
 
 await page.goto(`${BASE}/login`, { waitUntil: "networkidle" });
-await page.locator('input[type="email"]').fill("admin@ecowrap.com");
-await page.locator('input[type="password"]').fill("admin123");
+await page.locator('input[type="email"]').fill(CREDS.email);
+await page.locator('input[type="password"]').fill(CREDS.password);
 await Promise.all([
   page.waitForURL((u) => !u.pathname.includes("/login"), { timeout: 45000 }),
   page.getByRole("button", { name: /^Sign in$/i }).click(),

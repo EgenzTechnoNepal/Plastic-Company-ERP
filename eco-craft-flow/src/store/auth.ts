@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { Role } from "@/constants/roles";
-import { setTokenProvider } from "@/services/api/client";
+import { ApiError, setTokenProvider } from "@/services/api/client";
 import {
   changePasswordRequest,
   loginRequest,
@@ -61,6 +61,13 @@ function fromDto(dto: AuthUserDto): AuthUser {
   };
 }
 
+/** Offline mock sessions are opt-in (VITE_ALLOW_OFFLINE_DEMO=true) so a live demo never lands on mock data. */
+export const OFFLINE_DEMO_ALLOWED = import.meta.env.VITE_ALLOW_OFFLINE_DEMO === "true";
+
+function serverUnreachable(err: unknown): boolean {
+  return !(err instanceof ApiError) || err.status >= 500;
+}
+
 function mockLogin(email: string, password: string): AuthUser {
   const found = DEMO_USERS.find(
     (u) => u.email.toLowerCase() === email.toLowerCase() && u.password === password,
@@ -91,6 +98,12 @@ export const useAuthStore = create<AuthState>()(
           });
           return user;
         } catch (err) {
+          if (!OFFLINE_DEMO_ALLOWED || !serverUnreachable(err)) {
+            if (serverUnreachable(err)) {
+              throw new Error("Cannot reach the ERP server. Check that the backend is running, then try again.");
+            }
+            throw err;
+          }
           const user = mockLogin(email, password);
           set({
             user,
@@ -98,7 +111,6 @@ export const useAuthStore = create<AuthState>()(
             refreshToken: null,
             source: "mock",
           });
-          void err;
           return user;
         }
       },
@@ -140,6 +152,11 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: s.refreshToken,
         source: s.source,
       }),
+      merge: (persisted, current) => {
+        const saved = (persisted ?? {}) as Partial<AuthState>;
+        if (saved.source === "mock" && !OFFLINE_DEMO_ALLOWED) return current;
+        return { ...current, ...saved };
+      },
       onRehydrateStorage: () => (state) => state?.setHydrated(),
     },
   ),

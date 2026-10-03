@@ -48,7 +48,7 @@ function monthLabel(date: string) {
 function DashboardPage() {
   const user = useAuthStore((s) => s.user);
   const live = useAuthStore((s) => s.source === "api");
-  const { data: summary } = useDashboardSummary();
+  const { data: summary, error: summaryError, refetch: refetchSummary } = useDashboardSummary();
   const invoices = useRecords("invoices");
   const salesOrders = useRecords("sales_orders");
   const purchaseOrders = useRecords("purchase_orders");
@@ -111,6 +111,18 @@ function DashboardPage() {
           </>
         }
       />
+
+      {live && summaryError && (
+        <div role="alert" className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm">
+          <span>
+            Live dashboard summary failed to load ({summaryError instanceof Error ? summaryError.message : "request failed"}).
+            KPIs below are incomplete.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void refetchSummary()}>
+            Retry
+          </Button>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 lg:grid-cols-5">
         <KpiCard

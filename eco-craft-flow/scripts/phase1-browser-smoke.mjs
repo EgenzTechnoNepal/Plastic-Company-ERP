@@ -6,8 +6,9 @@
 import { chromium } from "playwright";
 import fs from "node:fs";
 import path from "node:path";
+import { FE_BASE as BASE, demoCredentials } from "./demo-env.mjs";
 
-const BASE = process.env.FE_BASE || "http://127.0.0.1:8081";
+const CREDS = demoCredentials();
 const OUT = path.resolve("phase1-browser-shots");
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -30,8 +31,8 @@ async function main() {
     // Fill login — try common selectors
     const email = page.locator('input[type="email"], input[name="email"], input#email').first();
     const password = page.locator('input[type="password"]').first();
-    await email.fill("admin@ecowrap.com");
-    await password.fill("admin123");
+    await email.fill(CREDS.email);
+    await password.fill(CREDS.password);
     await page.screenshot({ path: path.join(OUT, "02-login-filled.png"), fullPage: true });
 
     await page.getByRole("button", { name: /sign in|log in|login/i }).first().click();
