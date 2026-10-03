@@ -14,6 +14,7 @@ from apps.inventory.models import (
     LandedCostComponent,
     LandedCostDocument,
     LandedCostDocumentStatus,
+    LotStatus,
     UnitOfMeasure,
     UomConversion,
 )
@@ -86,8 +87,27 @@ def convert_quantity(quantity, from_uom: UnitOfMeasure, to_uom: UnitOfMeasure) -
     )
 
 
-def transition_lot_status(lot: InventoryLot, new_status: str, *, user=None) -> InventoryLot:
-    allowed = LOT_STATUS_TRANSITIONS.get(lot.status, set())
+def transition_lot_status(
+    lot: InventoryLot,
+    new_status: str,
+    *,
+    user=None,
+    allow_fail_to_available: bool | None = None,
+) -> InventoryLot:
+    from apps.core.phase3_policy import ALLOW_FAIL_TO_AVAILABLE_WITHOUT_REINSPECT
+
+    allowed = set(LOT_STATUS_TRANSITIONS.get(lot.status, set()))
+    # Optional legacy escape hatch: Fail → Available without reinspect
+    if (
+        lot.status == LotStatus.QUARANTINED
+        and new_status == LotStatus.AVAILABLE
+        and (
+            allow_fail_to_available
+            if allow_fail_to_available is not None
+            else ALLOW_FAIL_TO_AVAILABLE_WITHOUT_REINSPECT
+        )
+    ):
+        allowed.add(LotStatus.AVAILABLE)
     if new_status not in allowed:
         raise InvalidStatusTransitionError(
             f"Cannot transition lot from {lot.status} to {new_status}.",

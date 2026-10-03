@@ -143,3 +143,11 @@ from apps.procurement.commercial import (  # noqa: E402,F401
     SupplierBillMatchStatus,
     SupplierBillStatus,
 )
+
+# Phase 1 trade finance (PI + LC)
+from apps.procurement.trade_finance import (  # noqa: E402,F401
+    LetterOfCredit,
+    LetterOfCreditStatus,
+    ProformaInvoice,
+    ProformaInvoiceStatus,
+)

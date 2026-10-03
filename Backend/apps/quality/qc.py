@@ -47,6 +47,10 @@ class QCInspection(BaseModel):
         related_name="+",
     )
     remarks = models.TextField(blank=True)
+    coa_reference = models.CharField(max_length=120, blank=True)
+    coa_attachment_url = models.URLField(blank=True, max_length=500)
+    metrics = models.JSONField(default=dict, blank=True)
+    ncr_reference = models.CharField(max_length=80, blank=True)
 
     class Meta(BaseModel.Meta):
         constraints = [

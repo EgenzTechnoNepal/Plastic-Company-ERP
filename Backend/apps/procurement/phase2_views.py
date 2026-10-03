@@ -14,6 +14,7 @@ from apps.procurement.inbound import (
     ImportShipment,
 )
 from apps.procurement.inbound_services import cancel_gate_entry, post_grn, submit_gate_entry
+from apps.procurement.lc_services import lc_inbound_status_for_po
 
 
 class ImportShipmentSerializer(serializers.ModelSerializer):
@@ -37,7 +38,35 @@ class ImportShipmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
 
+def _po_from_gate_obj(obj: GateEntry):
+    if obj.purchase_order_id:
+        return obj.purchase_order
+    if obj.shipment_id and getattr(obj.shipment, "purchase_order_id", None):
+        return obj.shipment.purchase_order
+    return None
+
+
+def _po_from_grn_obj(obj: GoodsReceiptNote):
+    gate = getattr(obj, "gate_entry", None)
+    if gate is not None:
+        po = _po_from_gate_obj(gate)
+        if po is not None:
+            return po
+    if obj.shipment_id and getattr(obj.shipment, "purchase_order_id", None):
+        return obj.shipment.purchase_order
+    line = obj.lines.select_related("purchase_order_line__purchase_order").first()
+    if line and line.purchase_order_line_id:
+        return line.purchase_order_line.purchase_order
+    return None
+
+
 class GateEntrySerializer(serializers.ModelSerializer):
+    lc_gate_allowed = serializers.SerializerMethodField()
+    lc_gate_message = serializers.SerializerMethodField()
+    lc_id = serializers.SerializerMethodField()
+    lc_document_number = serializers.SerializerMethodField()
+    lc_status = serializers.SerializerMethodField()
+
     class Meta:
         model = GateEntry
         fields = [
@@ -59,8 +88,48 @@ class GateEntrySerializer(serializers.ModelSerializer):
             "is_active",
             "created_at",
             "updated_at",
+            "lc_gate_allowed",
+            "lc_gate_message",
+            "lc_id",
+            "lc_document_number",
+            "lc_status",
         ]
-        read_only_fields = ["id", "status", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "created_at",
+            "updated_at",
+            "lc_gate_allowed",
+            "lc_gate_message",
+            "lc_id",
+            "lc_document_number",
+            "lc_status",
+        ]
+
+    def _lc_status(self, obj: GateEntry) -> dict:
+        cache = getattr(self, "_lc_status_cache", None)
+        if cache is None:
+            cache = {}
+            self._lc_status_cache = cache
+        key = str(obj.pk)
+        if key not in cache:
+            cache[key] = lc_inbound_status_for_po(_po_from_gate_obj(obj))
+        return cache[key]
+
+    def get_lc_gate_allowed(self, obj: GateEntry) -> bool:
+        return bool(self._lc_status(obj)["lc_gate_allowed"])
+
+    def get_lc_gate_message(self, obj: GateEntry) -> str:
+        return str(self._lc_status(obj).get("lc_gate_message") or "")
+
+    def get_lc_id(self, obj: GateEntry):
+        return self._lc_status(obj).get("lc_id")
+
+    def get_lc_document_number(self, obj: GateEntry):
+        return self._lc_status(obj).get("lc_document_number")
+
+    def get_lc_status(self, obj: GateEntry):
+        return self._lc_status(obj).get("lc_status")
 
 
 class GoodsReceiptLineSerializer(serializers.ModelSerializer):
@@ -89,6 +158,11 @@ class GoodsReceiptLineSerializer(serializers.ModelSerializer):
 
 class GoodsReceiptNoteSerializer(serializers.ModelSerializer):
     lines = GoodsReceiptLineSerializer(many=True, required=False)
+    lc_gate_allowed = serializers.SerializerMethodField()
+    lc_gate_message = serializers.SerializerMethodField()
+    lc_id = serializers.SerializerMethodField()
+    lc_document_number = serializers.SerializerMethodField()
+    lc_status = serializers.SerializerMethodField()
 
     class Meta:
         model = GoodsReceiptNote
@@ -109,8 +183,48 @@ class GoodsReceiptNoteSerializer(serializers.ModelSerializer):
             "notes",
             "lines",
             "created_at",
+            "lc_gate_allowed",
+            "lc_gate_message",
+            "lc_id",
+            "lc_document_number",
+            "lc_status",
         ]
-        read_only_fields = ["id", "status", "posted_at", "created_at"]
+        read_only_fields = [
+            "id",
+            "status",
+            "posted_at",
+            "created_at",
+            "lc_gate_allowed",
+            "lc_gate_message",
+            "lc_id",
+            "lc_document_number",
+            "lc_status",
+        ]
+
+    def _lc_status(self, obj: GoodsReceiptNote) -> dict:
+        cache = getattr(self, "_lc_status_cache", None)
+        if cache is None:
+            cache = {}
+            self._lc_status_cache = cache
+        key = str(obj.pk)
+        if key not in cache:
+            cache[key] = lc_inbound_status_for_po(_po_from_grn_obj(obj))
+        return cache[key]
+
+    def get_lc_gate_allowed(self, obj: GoodsReceiptNote) -> bool:
+        return bool(self._lc_status(obj)["lc_gate_allowed"])
+
+    def get_lc_gate_message(self, obj: GoodsReceiptNote) -> str:
+        return str(self._lc_status(obj).get("lc_gate_message") or "")
+
+    def get_lc_id(self, obj: GoodsReceiptNote):
+        return self._lc_status(obj).get("lc_id")
+
+    def get_lc_document_number(self, obj: GoodsReceiptNote):
+        return self._lc_status(obj).get("lc_document_number")
+
+    def get_lc_status(self, obj: GoodsReceiptNote):
+        return self._lc_status(obj).get("lc_status")
 
     def create(self, validated_data):
         lines_data = validated_data.pop("lines", [])
@@ -147,7 +261,9 @@ class ImportShipmentViewSet(InboundMasterViewSet):
 
 
 class GateEntryViewSet(InboundMasterViewSet):
-    queryset = GateEntry.objects.select_related("supplier", "shipment").all()
+    queryset = GateEntry.objects.select_related(
+        "supplier", "shipment", "shipment__purchase_order", "purchase_order"
+    ).all()
     serializer_class = GateEntrySerializer
     search_fields = ["gate_entry_number", "vehicle_number", "driver_name"]
     filterset_fields = ["company", "supplier", "status"]
@@ -167,7 +283,14 @@ class GateEntryViewSet(InboundMasterViewSet):
 
 class GoodsReceiptViewSet(InboundMasterViewSet):
     queryset = GoodsReceiptNote.objects.prefetch_related("lines").select_related(
-        "supplier", "warehouse", "gate_entry"
+        "supplier",
+        "warehouse",
+        "gate_entry",
+        "gate_entry__purchase_order",
+        "gate_entry__shipment",
+        "gate_entry__shipment__purchase_order",
+        "shipment",
+        "shipment__purchase_order",
     ).all()
     serializer_class = GoodsReceiptNoteSerializer
     search_fields = ["grn_number", "purchase_reference"]

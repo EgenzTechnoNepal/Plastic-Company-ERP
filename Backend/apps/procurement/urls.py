@@ -19,4 +19,17 @@ router.register("goods-receipt-lines", phase2_views.GoodsReceiptLineViewSet, bas
 router.register("purchase-orders", phase3_views.PurchaseOrderViewSet, basename="purchase-order-typed")
 router.register("supplier-bills", phase3_views.SupplierBillViewSet, basename="supplier-bill-typed")
 
+from apps.procurement import trade_finance_views
+
+router.register(
+    "proforma-invoices",
+    trade_finance_views.ProformaInvoiceViewSet,
+    basename="proforma-invoice",
+)
+router.register(
+    "letters-of-credit",
+    trade_finance_views.LetterOfCreditViewSet,
+    basename="letter-of-credit",
+)
+
 urlpatterns = router.urls

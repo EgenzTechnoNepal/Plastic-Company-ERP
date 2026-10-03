@@ -9,7 +9,8 @@ from django.utils import timezone
 
 from apps.core.events import GRN_POSTED, emit
 from apps.core.exceptions import ERPError, InvalidStatusTransitionError
-from apps.core.phase3_policy import PO_RECEIVABLE_STATUSES, REQUIRE_PO_ON_GRN
+from apps.core.phase3_policy import AUTO_QUARANTINE_BIN_ON_QC_HOLD, PO_RECEIVABLE_STATUSES, REQUIRE_PO_ON_GRN
+from apps.core.services.numbering import generate_document_number
 from apps.inventory.models import InventoryLot, InventoryReceiptLayer, LotStatus
 from apps.inventory.ledger import StockTxnType
 from apps.inventory.services import UomConversionError, _as_decimal, convert_quantity
@@ -23,10 +24,38 @@ from apps.procurement.inbound import (
     GoodsReceiptNote,
     GrnStatus,
 )
+from apps.procurement.lc_services import assert_lc_allows_inbound
+from apps.quality.qc import QCInspection, QCInspectionStatus
+from apps.warehouse.bin_resolver import resolve_qc_hold_bin
 
 
 class InboundError(ERPError):
     default_code = "INBOUND_ERROR"
+
+
+def _po_for_gate(gate: GateEntry):
+    if gate.purchase_order_id:
+        return gate.purchase_order
+    shipment = getattr(gate, "shipment", None)
+    if shipment is not None and getattr(shipment, "purchase_order_id", None):
+        return shipment.purchase_order
+    return None
+
+
+def _po_for_grn(grn: GoodsReceiptNote, lines: list[GoodsReceiptLine] | None = None):
+    gate = getattr(grn, "gate_entry", None)
+    if gate is not None:
+        po = _po_for_gate(gate)
+        if po is not None:
+            return po
+    shipment = getattr(grn, "shipment", None)
+    if shipment is not None and getattr(shipment, "purchase_order_id", None):
+        return shipment.purchase_order
+    for line in lines or []:
+        pol = getattr(line, "purchase_order_line", None)
+        if pol is not None and getattr(pol, "purchase_order_id", None):
+            return pol.purchase_order
+    return None
 
 
 def _transition_gate(gate: GateEntry, new_status: str) -> GateEntry:
@@ -111,8 +140,13 @@ def _validate_po_line_for_grn(*, grn: GoodsReceiptNote, line: GoodsReceiptLine, 
 
 @transaction.atomic
 def submit_gate_entry(*, gate: GateEntry, user=None) -> GateEntry:
-    gate = GateEntry.objects.select_for_update().get(pk=gate.pk)
+    gate = (
+        GateEntry.objects.select_for_update()
+        .select_related("purchase_order", "shipment", "shipment__purchase_order")
+        .get(pk=gate.pk)
+    )
     assert_company_allowed(user, gate.company_id)
+    assert_lc_allows_inbound(_po_for_gate(gate))
     return _transition_gate(gate, GateEntryStatus.SUBMITTED)
 
 
@@ -132,7 +166,18 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     """
     grn = (
         GoodsReceiptNote.objects.select_for_update()
-        .select_related("company", "supplier", "warehouse", "receiving_bin")
+        .select_related(
+            "company",
+            "supplier",
+            "warehouse",
+            "receiving_bin",
+            "gate_entry",
+            "gate_entry__purchase_order",
+            "gate_entry__shipment",
+            "gate_entry__shipment__purchase_order",
+            "shipment",
+            "shipment__purchase_order",
+        )
         .prefetch_related("lines__item", "lines__uom", "lines__purchase_order_line")
         .get(pk=grn.pk)
     )
@@ -147,7 +192,10 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     assert_related_same_company(grn.company_id, "supplier", grn.supplier)
     assert_related_same_company(grn.company_id, "warehouse", grn.warehouse)
 
-    lines = list(grn.lines.select_related("item", "uom", "purchase_order_line").all())
+    lines = list(
+        grn.lines.select_related("item", "uom", "purchase_order_line", "purchase_order_line__purchase_order").all()
+    )
+    assert_lc_allows_inbound(_po_for_grn(grn, lines))
 
     # Pre-validate ALL PO linkages before any stock write
     for line in lines:
@@ -171,6 +219,9 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
 
         lot_number = line.lot_number or f"{grn.grn_number}-{line.item.sku}"
         initial_status = LotStatus.QC_HOLD if line.item.qc_required else LotStatus.AVAILABLE
+        place_bin = grn.receiving_bin
+        if line.item.qc_required and AUTO_QUARANTINE_BIN_ON_QC_HOLD:
+            place_bin = resolve_qc_hold_bin(warehouse=grn.warehouse, user=user)
 
         lot = InventoryLot.objects.create(
             company=grn.company,
@@ -185,7 +236,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             source_grn_reference=grn.grn_number,
             purchase_reference=grn.purchase_reference,
             warehouse=grn.warehouse,
-            bin=grn.receiving_bin,
+            bin=place_bin,
             status=initial_status,
             qc_status="HOLD" if line.item.qc_required else "N/A",
             uom=line.uom,
@@ -203,7 +254,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             lot=lot,
             item=line.item,
             warehouse=grn.warehouse,
-            bin=grn.receiving_bin,
+            bin=place_bin,
             received_at=grn.received_at or now,
             receipt_sequence=seq,
             fifo_rank=seq,
@@ -230,7 +281,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             lot=lot,
             receipt_layer=layer,
             warehouse=grn.warehouse,
-            bin=grn.receiving_bin,
+            bin=place_bin,
             txn_type=StockTxnType.GRN_RECEIPT,
             quantity_in=accepted,
             uom=line.uom,
@@ -241,6 +292,18 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             reason=f"GRN {grn.grn_number}",
             occurred_at=grn.received_at or now,
         )
+
+        if line.item.qc_required:
+            QCInspection.objects.create(
+                company=grn.company,
+                inspection_number=generate_document_number("QCI"),
+                grn=grn,
+                lot=lot,
+                item=line.item,
+                status=QCInspectionStatus.DRAFT,
+                created_by=user,
+                updated_by=user,
+            )
 
         if line.purchase_order_line_id:
             from apps.procurement.po_services import apply_po_receipt_progress

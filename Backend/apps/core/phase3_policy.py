@@ -27,6 +27,15 @@ ALLOW_INVOICE_BEFORE_DISPATCH = False
 # 7. Credit limit hard block (default warning only)
 CREDIT_LIMIT_HARD_BLOCK = False
 
+# 8. Block Gate submit / GRN post when PO has an active LC not DOCS_CLEARED
+BLOCK_GATE_IF_LC_DOCS_NOT_CLEARED = True
+
+# 9. Phase 3 QC plant gate
+AUTO_QUARANTINE_BIN_ON_QC_HOLD = True
+REQUIRE_COA_BEFORE_QC_PASS = True
+QC_FAIL_DEFAULT_DISPOSITION = "QUARANTINED"
+ALLOW_FAIL_TO_AVAILABLE_WITHOUT_REINSPECT = False
+
 # Reservation reference for SO lines
 SO_LINE_RESERVATION_REF = "SALES_ORDER_LINE"
 

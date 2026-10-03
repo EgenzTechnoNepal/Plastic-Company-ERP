@@ -90,6 +90,7 @@ class ItemSerializer(serializers.ModelSerializer):
             "batch_tracking",
             "expiry_tracking",
             "qc_required",
+            "coa_required",
             "fifo_eligible",
             "reorder_level",
             "safety_stock",

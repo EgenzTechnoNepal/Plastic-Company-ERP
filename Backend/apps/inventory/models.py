@@ -130,6 +130,10 @@ class Item(BaseModel):
     batch_tracking = models.BooleanField(default=True)
     expiry_tracking = models.BooleanField(default=False)
     qc_required = models.BooleanField(default=True)
+    coa_required = models.BooleanField(
+        default=False,
+        help_text="When True and REQUIRE_COA_BEFORE_QC_PASS, Pass needs CoA reference/attachment.",
+    )
     fifo_eligible = models.BooleanField(default=True)
 
     reorder_level = models.DecimalField(max_digits=18, decimal_places=6, null=True, blank=True)
@@ -233,7 +237,8 @@ LOT_STATUS_TRANSITIONS: dict[str, set[str]] = {
     LotStatus.RECEIVED: {LotStatus.QC_HOLD},
     LotStatus.QC_HOLD: {LotStatus.AVAILABLE, LotStatus.QUARANTINED, LotStatus.REJECTED},
     LotStatus.AVAILABLE: {LotStatus.CONSUMED, LotStatus.EXPIRED, LotStatus.QUARANTINED},
-    LotStatus.QUARANTINED: {LotStatus.AVAILABLE, LotStatus.REJECTED, LotStatus.EXPIRED},
+    # Reinspect path: QUARANTINED → QC_HOLD → Pass → AVAILABLE (not free Fail→Available)
+    LotStatus.QUARANTINED: {LotStatus.QC_HOLD, LotStatus.REJECTED, LotStatus.EXPIRED},
     LotStatus.REJECTED: set(),
     LotStatus.CONSUMED: set(),
     LotStatus.EXPIRED: set(),
