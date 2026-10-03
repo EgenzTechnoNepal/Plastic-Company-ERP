@@ -1,0 +1,18 @@
+LOGIN http://127.0.0.1:8081/dashboard
+ERROR locator.click: Timeout 60000ms exceeded.
+Call log:
+  - waiting for getByText('LC-0000-000001').first()
+    - locator resolved to <div class="font-mono text-xs text-muted-foreground">LC-0000-000001</div>
+  - attempting click action
+    2 × waiting for element to be visible, enabled and stable
+      - element is not visible
+    - retrying click action
+    - waiting 20ms
+    2 × waiting for element to be visible, enabled and stable
+      - element is not visible
+    - retrying click action
+      - waiting 100ms
+    115 × waiting for element to be visible, enabled and stable
+        - element is not visible
+      - retrying click action
+        - waiting 500ms

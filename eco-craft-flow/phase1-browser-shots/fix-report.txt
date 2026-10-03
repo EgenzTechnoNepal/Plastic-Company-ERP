@@ -1,0 +1,8 @@
+PASS po-orders http://127.0.0.1:8081/purchase/orders
+PASS pi-list http://127.0.0.1:8081/purchase/proformas
+PASS lc-list http://127.0.0.1:8081/purchase/letters-of-credit
+PASS lc-draft http://127.0.0.1:8081/purchase/letters-of-credit/LC-0000-000001
+PASS suppliers http://127.0.0.1:8081/purchase/suppliers
+PASS gate http://127.0.0.1:8081/purchase/gate-entries
+PASS grn http://127.0.0.1:8081/purchase/receipts
+ALL OK

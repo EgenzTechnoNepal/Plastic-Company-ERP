@@ -1,0 +1,6 @@
+LOGIN http://127.0.0.1:8081/login#
+GOTO http://127.0.0.1:8081/purchase/letters-of-credit/LC-0000-000001
+HAS_WORKFLOW=false
+HAS_NOT_FOUND=false
+NO_SCAN_BUTTON
+NEW_PI http://127.0.0.1:8081/login

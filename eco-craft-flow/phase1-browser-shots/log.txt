@@ -1,0 +1,8 @@
+GOTO http://127.0.0.1:8081/login
+AFTER_LOGIN url=http://127.0.0.1:8081/dashboard
+GOTO /purchase/proformas
+PI_PAGE has Proforma=true New=true
+GOTO /purchase/letters-of-credit
+LC_PAGE has Letters=true
+LC_DETAIL workflow=false
+TABS Proforma=true LC=true

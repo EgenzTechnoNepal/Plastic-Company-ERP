@@ -1,0 +1,20 @@
+BASE=http://127.0.0.1:8081
+checked=16
+passed=15
+failed=1
+PASS Login → dashboard — http://127.0.0.1:8081/dashboard
+PASS Purchase page — tabs/links visible
+PASS Proforma list — http://127.0.0.1:8081/purchase/proformas
+PASS New Proforma form — http://127.0.0.1:8081/purchase/proformas/new
+PASS LC list — http://127.0.0.1:8081/purchase/letters-of-credit
+PASS LC detail LC-0000-000003 — http://127.0.0.1:8081/purchase/letters-of-credit/LC-0000-000003
+PASS LC workflow panel
+PASS Workflow button scan
+PASS Workflow button match
+PASS Workflow button seller
+PASS Workflow button final
+PASS Workflow button verify
+PASS Scan Draft LC action — clicked
+PASS Run AI match action — passed UI
+PASS New LC form — http://127.0.0.1:8081/purchase/letters-of-credit/new
+FAIL PO list still authed — http://127.0.0.1:8081/purchase/purchase-orders

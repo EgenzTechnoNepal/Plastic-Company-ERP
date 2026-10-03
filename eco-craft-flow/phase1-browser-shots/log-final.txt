@@ -1,0 +1,8 @@
+LOGIN_URL=http://127.0.0.1:8081/dashboard
+PI_OK=true
+LC_OK=true
+DETAIL_URL=http://127.0.0.1:8081/purchase/letters-of-credit/LC-0000-000001
+WORKFLOW=true
+SNIPPET=OPERATIONS |  | Dashboard | Inventory | Warehouse | Production | Quality Control |  | COMMERCE |  | CRM | Sales | Purchase | Accounting |  | PEOPLE |  | HR |  | INTEGRATIONS |  | IRD / CBMS | Integrations |  | SYSTEM |  | AI workspace | Reports | Notifications | Approvals | Audit Logs | Settings | v1.0 · Live APIs B–I | नेपाली | AD | AU | Admin User | Letters of Credit | LC-0000-000001 | Draft | Laxmi Sunrise Bank |  | Purchase |  | Edit | Header | HEADER | Purchase Order* | 56283bb9-2126-4f
+AFTER=none
+NEW_PI=http://127.0.0.1:8081/purchase/proformas/new form=true
