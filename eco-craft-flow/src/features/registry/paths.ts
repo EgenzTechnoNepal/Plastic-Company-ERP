@@ -27,6 +27,8 @@ export const ENTITY_PATHS: EntityPath[] = [
   { module: "purchase", slug: "requisitions", entity: "purchase_requisitions" },
   { module: "purchase", slug: "rfqs", entity: "rfqs" },
   { module: "purchase", slug: "orders", entity: "purchase_orders" },
+  { module: "purchase", slug: "proformas", entity: "proforma_invoices" },
+  { module: "purchase", slug: "letters-of-credit", entity: "letters_of_credit" },
   { module: "purchase", slug: "gate-entries", entity: "gate_entries" },
   { module: "purchase", slug: "receipts", entity: "grns" },
   { module: "purchase", slug: "bills", entity: "purchase_bills" },

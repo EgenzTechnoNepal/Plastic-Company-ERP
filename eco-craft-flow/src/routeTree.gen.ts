@@ -97,9 +97,11 @@ import { Route as AppPurchaseIndexRouteImport } from './routes/_app.purchase.ind
 import { Route as AppPurchaseBillsRouteImport } from './routes/_app.purchase.bills'
 import { Route as AppPurchaseDebitNotesRouteImport } from './routes/_app.purchase.debit-notes'
 import { Route as AppPurchaseGateEntriesRouteImport } from './routes/_app.purchase.gate-entries'
+import { Route as AppPurchaseLettersOfCreditRouteImport } from './routes/_app.purchase.letters-of-credit'
 import { Route as AppPurchaseOcrRouteImport } from './routes/_app.purchase.ocr'
 import { Route as AppPurchaseOrdersRouteImport } from './routes/_app.purchase.orders'
 import { Route as AppPurchasePaymentsRouteImport } from './routes/_app.purchase.payments'
+import { Route as AppPurchaseProformasRouteImport } from './routes/_app.purchase.proformas'
 import { Route as AppPurchaseReceiptsRouteImport } from './routes/_app.purchase.receipts'
 import { Route as AppPurchaseRequisitionsRouteImport } from './routes/_app.purchase.requisitions'
 import { Route as AppPurchaseReturnsRouteImport } from './routes/_app.purchase.returns'
@@ -631,6 +633,12 @@ const AppPurchaseGateEntriesRoute = AppPurchaseGateEntriesRouteImport.update({
   path: '/gate-entries',
   getParentRoute: () => AppPurchaseRoute,
 } as any)
+const AppPurchaseLettersOfCreditRoute =
+  AppPurchaseLettersOfCreditRouteImport.update({
+    id: '/letters-of-credit',
+    path: '/letters-of-credit',
+    getParentRoute: () => AppPurchaseRoute,
+  } as any)
 const AppPurchaseOcrRoute = AppPurchaseOcrRouteImport.update({
   id: '/ocr',
   path: '/ocr',
@@ -644,6 +652,11 @@ const AppPurchaseOrdersRoute = AppPurchaseOrdersRouteImport.update({
 const AppPurchasePaymentsRoute = AppPurchasePaymentsRouteImport.update({
   id: '/payments',
   path: '/payments',
+  getParentRoute: () => AppPurchaseRoute,
+} as any)
+const AppPurchaseProformasRoute = AppPurchaseProformasRouteImport.update({
+  id: '/proformas',
+  path: '/proformas',
   getParentRoute: () => AppPurchaseRoute,
 } as any)
 const AppPurchaseReceiptsRoute = AppPurchaseReceiptsRouteImport.update({
@@ -1190,9 +1203,11 @@ export interface FileRoutesByFullPath {
   '/purchase/bills': typeof AppPurchaseBillsRoute
   '/purchase/debit-notes': typeof AppPurchaseDebitNotesRoute
   '/purchase/gate-entries': typeof AppPurchaseGateEntriesRoute
+  '/purchase/letters-of-credit': typeof AppPurchaseLettersOfCreditRoute
   '/purchase/ocr': typeof AppPurchaseOcrRoute
   '/purchase/orders': typeof AppPurchaseOrdersRoute
   '/purchase/payments': typeof AppPurchasePaymentsRoute
+  '/purchase/proformas': typeof AppPurchaseProformasRoute
   '/purchase/receipts': typeof AppPurchaseReceiptsRoute
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
@@ -1357,9 +1372,11 @@ export interface FileRoutesByTo {
   '/purchase/bills': typeof AppPurchaseBillsRoute
   '/purchase/debit-notes': typeof AppPurchaseDebitNotesRoute
   '/purchase/gate-entries': typeof AppPurchaseGateEntriesRoute
+  '/purchase/letters-of-credit': typeof AppPurchaseLettersOfCreditRoute
   '/purchase/ocr': typeof AppPurchaseOcrRoute
   '/purchase/orders': typeof AppPurchaseOrdersRoute
   '/purchase/payments': typeof AppPurchasePaymentsRoute
+  '/purchase/proformas': typeof AppPurchaseProformasRoute
   '/purchase/receipts': typeof AppPurchaseReceiptsRoute
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
@@ -1530,9 +1547,11 @@ export interface FileRoutesById {
   '/_app/purchase/bills': typeof AppPurchaseBillsRoute
   '/_app/purchase/debit-notes': typeof AppPurchaseDebitNotesRoute
   '/_app/purchase/gate-entries': typeof AppPurchaseGateEntriesRoute
+  '/_app/purchase/letters-of-credit': typeof AppPurchaseLettersOfCreditRoute
   '/_app/purchase/ocr': typeof AppPurchaseOcrRoute
   '/_app/purchase/orders': typeof AppPurchaseOrdersRoute
   '/_app/purchase/payments': typeof AppPurchasePaymentsRoute
+  '/_app/purchase/proformas': typeof AppPurchaseProformasRoute
   '/_app/purchase/receipts': typeof AppPurchaseReceiptsRoute
   '/_app/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/_app/purchase/returns': typeof AppPurchaseReturnsRoute
@@ -1712,9 +1731,11 @@ export interface FileRouteTypes {
     | '/purchase/bills'
     | '/purchase/debit-notes'
     | '/purchase/gate-entries'
+    | '/purchase/letters-of-credit'
     | '/purchase/ocr'
     | '/purchase/orders'
     | '/purchase/payments'
+    | '/purchase/proformas'
     | '/purchase/receipts'
     | '/purchase/requisitions'
     | '/purchase/returns'
@@ -1879,9 +1900,11 @@ export interface FileRouteTypes {
     | '/purchase/bills'
     | '/purchase/debit-notes'
     | '/purchase/gate-entries'
+    | '/purchase/letters-of-credit'
     | '/purchase/ocr'
     | '/purchase/orders'
     | '/purchase/payments'
+    | '/purchase/proformas'
     | '/purchase/receipts'
     | '/purchase/requisitions'
     | '/purchase/returns'
@@ -2051,9 +2074,11 @@ export interface FileRouteTypes {
     | '/_app/purchase/bills'
     | '/_app/purchase/debit-notes'
     | '/_app/purchase/gate-entries'
+    | '/_app/purchase/letters-of-credit'
     | '/_app/purchase/ocr'
     | '/_app/purchase/orders'
     | '/_app/purchase/payments'
+    | '/_app/purchase/proformas'
     | '/_app/purchase/receipts'
     | '/_app/purchase/requisitions'
     | '/_app/purchase/returns'
@@ -2778,6 +2803,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPurchaseGateEntriesRouteImport
       parentRoute: typeof AppPurchaseRoute
     }
+    '/_app/purchase/letters-of-credit': {
+      id: '/_app/purchase/letters-of-credit'
+      path: '/letters-of-credit'
+      fullPath: '/purchase/letters-of-credit'
+      preLoaderRoute: typeof AppPurchaseLettersOfCreditRouteImport
+      parentRoute: typeof AppPurchaseRoute
+    }
     '/_app/purchase/ocr': {
       id: '/_app/purchase/ocr'
       path: '/ocr'
@@ -2797,6 +2829,13 @@ declare module '@tanstack/react-router' {
       path: '/payments'
       fullPath: '/purchase/payments'
       preLoaderRoute: typeof AppPurchasePaymentsRouteImport
+      parentRoute: typeof AppPurchaseRoute
+    }
+    '/_app/purchase/proformas': {
+      id: '/_app/purchase/proformas'
+      path: '/proformas'
+      fullPath: '/purchase/proformas'
+      preLoaderRoute: typeof AppPurchaseProformasRouteImport
       parentRoute: typeof AppPurchaseRoute
     }
     '/_app/purchase/receipts': {
@@ -3723,9 +3762,11 @@ interface AppPurchaseRouteChildren {
   AppPurchaseBillsRoute: typeof AppPurchaseBillsRoute
   AppPurchaseDebitNotesRoute: typeof AppPurchaseDebitNotesRoute
   AppPurchaseGateEntriesRoute: typeof AppPurchaseGateEntriesRoute
+  AppPurchaseLettersOfCreditRoute: typeof AppPurchaseLettersOfCreditRoute
   AppPurchaseOcrRoute: typeof AppPurchaseOcrRoute
   AppPurchaseOrdersRoute: typeof AppPurchaseOrdersRoute
   AppPurchasePaymentsRoute: typeof AppPurchasePaymentsRoute
+  AppPurchaseProformasRoute: typeof AppPurchaseProformasRoute
   AppPurchaseReceiptsRoute: typeof AppPurchaseReceiptsRoute
   AppPurchaseRequisitionsRoute: typeof AppPurchaseRequisitionsRoute
   AppPurchaseReturnsRoute: typeof AppPurchaseReturnsRoute
@@ -3740,9 +3781,11 @@ const AppPurchaseRouteChildren: AppPurchaseRouteChildren = {
   AppPurchaseBillsRoute: AppPurchaseBillsRoute,
   AppPurchaseDebitNotesRoute: AppPurchaseDebitNotesRoute,
   AppPurchaseGateEntriesRoute: AppPurchaseGateEntriesRoute,
+  AppPurchaseLettersOfCreditRoute: AppPurchaseLettersOfCreditRoute,
   AppPurchaseOcrRoute: AppPurchaseOcrRoute,
   AppPurchaseOrdersRoute: AppPurchaseOrdersRoute,
   AppPurchasePaymentsRoute: AppPurchasePaymentsRoute,
+  AppPurchaseProformasRoute: AppPurchaseProformasRoute,
   AppPurchaseReceiptsRoute: AppPurchaseReceiptsRoute,
   AppPurchaseRequisitionsRoute: AppPurchaseRequisitionsRoute,
   AppPurchaseReturnsRoute: AppPurchaseReturnsRoute,

@@ -22,6 +22,8 @@ export const RECORD_PATHS: Record<string, string> = {
   purchase_requisitions: "/purchase/requisitions/",
   rfqs: "/purchase/rfqs/",
   purchase_orders: "/purchase/orders/",
+  proforma_invoices: "/purchase/proforma-invoices/",
+  letters_of_credit: "/purchase/letters-of-credit/",
   gate_entries: "/purchase/gate-entries/",
   grns: "/purchase/receipts/",
   purchase_bills: "/purchase/bills/",
@@ -194,6 +196,18 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
   if (entity === "activities") {
     const { createTypedActivity } = await import("./crm");
     return createTypedActivity(record);
+  }
+  if (entity === "products") {
+    const { createTypedProduct } = await import("./m2Typed");
+    return createTypedProduct(record);
+  }
+  if (entity === "proforma_invoices") {
+    const { createTypedProformaInvoice } = await import("./m2Typed");
+    return createTypedProformaInvoice(record);
+  }
+  if (entity === "letters_of_credit") {
+    const { createTypedLetterOfCredit } = await import("./m2Typed");
+    return createTypedLetterOfCredit(record);
   }
   const row = await apiFetch<RecordDto>(pathFor(entity), {
     method: "POST",

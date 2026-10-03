@@ -43,12 +43,12 @@ export function notify(n: Omit<NotificationItem, "id" | "at" | "read">) {
   db.set((s) => ({ notifications: [{ id: rid("n"), at: now(), read: false, ...n }, ...s.notifications].slice(0, 300) }));
 }
 
-export function nextCode(entity: string): string {
+export function nextCode(entity: string, prefixOverride?: string): string {
   const def = getEntity(entity);
-  const prefix = def?.prefix ?? entity.slice(0, 3).toUpperCase();
+  const prefix = prefixOverride ?? def?.prefix ?? entity.slice(0, 3).toUpperCase();
   const rows = db.get().records[entity] ?? [];
   const nums = rows
-    .map((r) => Number(r.code.replace(/\D+/g, "").slice(-4)))
+    .map((r) => Number(String(r.code).replace(/\D+/g, "").slice(-4)))
     .filter((x) => !Number.isNaN(x));
   const next = (nums.length ? Math.max(...nums) : 0) + 1;
   return `${prefix}-${String(next).padStart(3, "0")}`;

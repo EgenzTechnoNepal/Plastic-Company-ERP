@@ -23,6 +23,18 @@ export const PHASE3_TYPED_API = {
   supplierBillApproveForAp: (id: string) => `${API_V1}/purchase/supplier-bills/${id}/approve-for-ap/`,
   supplierBillPost: (id: string) => `${API_V1}/purchase/supplier-bills/${id}/post/`,
 
+  proformaInvoices: `${API_V1}/purchase/proforma-invoices/`,
+  lettersOfCredit: `${API_V1}/purchase/letters-of-credit/`,
+  lcScanDraft: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/scan-draft/`,
+  lcAiScanDraft: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/ai-scan-draft/`,
+  lcAiSuggestPreDispatch: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/ai-suggest-pre-dispatch/`,
+  lcRunMatch: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/run-match/`,
+  lcSellerOk: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/seller-ok/`,
+  lcIssueFinal: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/issue-final/`,
+  lcMarkManufacturing: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/mark-manufacturing/`,
+  lcStartPreDispatch: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/start-pre-dispatch/`,
+  lcVerifyPreDispatch: (id: string) => `${API_V1}/purchase/letters-of-credit/${id}/verify-pre-dispatch/`,
+
   salesOrders: `${API_V1}/sales/sales-orders/`,
   salesOrdersSummary: `${API_V1}/sales/sales-orders/summary/`,
   salesOrderConfirm: (id: string) => `${API_V1}/sales/sales-orders/${id}/confirm/`,
@@ -185,3 +197,93 @@ export function postSalesInvoice(id: string) {
 export function cancelSalesInvoice(id: string) {
   return apiFetch(PHASE3_TYPED_API.salesInvoiceCancel(id), { method: "POST", silent: true });
 }
+
+export type LetterOfCreditDto = {
+  id: string;
+  document_number?: string;
+  status?: string;
+  purchase_order?: string;
+  proforma_invoice?: string | null;
+  bank_name?: string;
+  amount?: string;
+  currency_code?: string;
+  draft_extracted?: Record<string, unknown>;
+  match_result?: Record<string, unknown>;
+  pre_dispatch_message?: string;
+  document_checklist?: { items?: Array<Record<string, unknown>> };
+  gate_allowed?: boolean;
+  gate_message?: string;
+};
+
+export function lcScanDraft(id: string, body: Record<string, unknown>) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcScanDraft(id), {
+    method: "POST",
+    body,
+    silent: true,
+  });
+}
+
+export function lcAiScanDraft(id: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcAiScanDraft(id), {
+    method: "POST",
+    body: form,
+    silent: true,
+  });
+}
+
+export type PreDispatchSuggestion = {
+  present_keys?: string[];
+  missing_keys?: string[];
+  confidence?: number;
+  summary?: string;
+  gemini_configured?: boolean;
+  gemini_model?: string | null;
+};
+
+export function lcAiSuggestPreDispatch(id: string, files: File[]) {
+  const form = new FormData();
+  for (const f of files) form.append("files", f);
+  return apiFetch<PreDispatchSuggestion>(PHASE3_TYPED_API.lcAiSuggestPreDispatch(id), {
+    method: "POST",
+    body: form,
+    silent: true,
+  });
+}
+
+export function lcRunMatch(id: string) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcRunMatch(id), { method: "POST", silent: true });
+}
+
+export function lcSellerOk(id: string, note = "") {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcSellerOk(id), {
+    method: "POST",
+    body: { note },
+    silent: true,
+  });
+}
+
+export function lcIssueFinal(id: string, finalLcNumber = "") {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcIssueFinal(id), {
+    method: "POST",
+    body: { final_lc_number: finalLcNumber },
+    silent: true,
+  });
+}
+
+export function lcMarkManufacturing(id: string) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcMarkManufacturing(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export function lcVerifyPreDispatch(id: string, presentKeys: string[]) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcVerifyPreDispatch(id), {
+    method: "POST",
+    body: { present_keys: presentKeys },
+    silent: true,
+  });
+}
+

@@ -39,6 +39,9 @@ import { InspectionChecks } from "@/features/quality/InspectionChecks";
 import { PlanSpec } from "@/features/quality/PlanSpec";
 import { CapaPipeline } from "@/features/quality/CapaPipeline";
 import { SupplierScorecard } from "@/features/quality/SupplierScorecard";
+import { LcWorkflowPanel } from "@/features/purchase/LcWorkflowPanel";
+import { LcGateGuardBanner } from "@/features/purchase/LcGateGuardBanner";
+import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { logView, useApprovals, useAudit, useRecord } from "@/services/entityService";
 
@@ -254,6 +257,15 @@ export function RecordDetailPage() {
             {entity === "rfqs" && <RfqCompare rfq={record} />}
             {entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}
+            {(entity === "gate_entries" || entity === "grns") && <LcGateGuardBanner record={record} />}
+            {entity === "letters_of_credit" && (
+              <LcWorkflowPanel
+                record={record}
+                onUpdated={() => {
+                  toast.success("LC updated — refresh list if status looks stale");
+                }}
+              />
+            )}
             {entity === "boms" && <BomExplosion bom={record} />}
             {entity === "production_plans" && <PlanPanel plan={record} />}
             {entity === "mrp_runs" && <MrpPanel run={record} />}
@@ -265,7 +277,17 @@ export function RecordDetailPage() {
             )}
             {entity === "machine_schedules" && <GanttBoard schedule={record} />}
             {entity === "batches" && <BatchGenealogy batch={record} />}
-            {entity === "qc_inspections" && <InspectionChecks qc={record} />}
+            {entity === "qc_inspections" && (
+              <>
+                <QcWorkflowPanel
+                  record={record}
+                  onUpdated={() => {
+                    toast.success("QC updated — refresh list if status looks stale");
+                  }}
+                />
+                <InspectionChecks qc={record} />
+              </>
+            )}
             {entity === "quality_plans" && <PlanSpec plan={record} />}
             {entity === "capas" && <CapaPipeline capa={record} />}
             {entity === "suppliers" && <SupplierScorecard supplier={record} />}

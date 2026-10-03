@@ -3,9 +3,12 @@ import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-ro
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PermissionGuard, fieldAccess } from "@/lib/permissions";
-import { useAuthStore } from "@/store/auth";
+import { useAuthStore, isLiveSession } from "@/store/auth";
 import { entityKeyFor, listPathFor, parseRecordLocation, recordPath } from "@/features/registry/paths";
 import { getEntity } from "@/features/registry/entities";
 import { RecordHeader } from "@/components/records/RecordHeader";
@@ -17,6 +20,7 @@ import { getService } from "@/services/catalog";
 import { makeLines, nextCode, useRecord } from "@/services/entityService";
 import { docTotals } from "@/types/erp";
 import type { LineItem } from "@/types/erp";
+import { productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -40,17 +44,23 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const def = getEntity(entity);
   const existing = useRecord(entity, code);
   const navigate = useNavigate();
+  const isProductForm = entity === "products";
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
     if (!def) return fields;
     for (const f of def.fields) {
-      fields[f.key] = existing?.fields[f.key] ?? (f.type === "switch" ? false : f.type === "number" || f.type === "currency" ? 0 : "");
+      fields[f.key] =
+        existing?.fields[f.key] ?? (f.type === "switch" ? false : f.type === "number" || f.type === "currency" ? 0 : "");
+    }
+    if (isProductForm && mode === "new") {
+      fields.type = fields.type || "Raw Material";
+      fields.uom = fields.uom || "KG";
+      fields.codeMode = "auto";
     }
     return fields;
-    // existing is stable per code
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode]);
+  }, [def?.key, existing?.id, mode, isProductForm]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {
@@ -61,12 +71,43 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const [dirty, setDirty] = useState(false);
   const [discardOpen, setDiscardOpen] = useState(false);
   const [pendingTo, setPendingTo] = useState<string | null>(null);
+  const [codeMode, setCodeMode] = useState<"auto" | "manual">("auto");
+  const [manualCode, setManualCode] = useState("");
+  const [autoCode, setAutoCode] = useState(() =>
+    nextCode("products", productSkuPrefix(String(initialFields.type || "Raw Material"))),
+  );
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     setFields(initialFields);
     setLines(existing?.lines.length ? existing.lines : def?.lines ? makeLines(1) : []);
     setDirty(false);
-  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines]);
+    if (mode === "new" && isProductForm) {
+      setCodeMode("auto");
+      setManualCode("");
+    }
+  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines, isProductForm]);
+
+  useEffect(() => {
+    if (!isProductForm || mode !== "new" || codeMode !== "auto") return;
+    const productType = String(fields.type || "Raw Material");
+    let cancelled = false;
+    (async () => {
+      if (isLiveSession()) {
+        try {
+          const suggested = await suggestProductSku(productType);
+          if (!cancelled) setAutoCode(suggested);
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
+      if (!cancelled) setAutoCode(nextCode("products", productSkuPrefix(productType)));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isProductForm, mode, codeMode, fields.type]);
 
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
@@ -100,10 +141,18 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
   const list = listPathFor(entity);
   const sections = groupFields(def);
-  const titleField = def.titleField ?? def.fields.find((f) => f.key === "name" || f.key === "customerName" || f.key === "narration")?.key;
-  const displayTitle =
-    mode === "new" ? `New ${def.singular}` : existing?.title ?? def.singular;
-  const displayCode = mode === "new" ? nextCode(entity) : existing?.code ?? code;
+  const titleField =
+    def.titleField ?? def.fields.find((f) => f.key === "name" || f.key === "customerName" || f.key === "narration")?.key;
+  const displayTitle = mode === "new" ? `New ${def.singular}` : existing?.title ?? def.singular;
+  const resolvedProductCode =
+    isProductForm && mode === "new"
+      ? codeMode === "manual"
+        ? manualCode.trim().toUpperCase()
+        : autoCode
+      : mode === "new"
+        ? nextCode(entity)
+        : (existing?.code ?? code);
+  const displayCode = resolvedProductCode || (mode === "new" ? "—" : code);
 
   const setField = (key: string, value: unknown) => {
     setDirty(true);
@@ -129,27 +178,38 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       toast.error(`${missing.label} is required`);
       return;
     }
+    if (isProductForm && mode === "new" && codeMode === "manual" && !manualCode.trim()) {
+      toast.error("Enter a product code, or switch to Auto-generate.");
+      return;
+    }
     const svc = getService(entity);
     const title = String(fields[titleField ?? "name"] ?? fields.customerName ?? fields.narration ?? displayTitle);
+    setSaving(true);
     try {
       if (mode === "new") {
         const created = await svc.create({
-          code: displayCode,
+          code: isProductForm ? resolvedProductCode : displayCode === "—" ? nextCode(entity) : displayCode,
           title,
-          fields,
+          fields: isProductForm ? { ...fields, codeMode, sku: resolvedProductCode } : fields,
           lines: def.lines ? lines : [],
         });
         toast.success(`${created.code} saved`);
         setDirty(false);
         navigate({ to: recordPath(entity, created.code) as never });
       } else if (existing) {
-        const updated = await svc.update(existing.id, { title, fields, lines: def.lines ? lines : existing.lines });
+        const updated = await svc.update(existing.id, {
+          title,
+          fields,
+          lines: def.lines ? lines : existing.lines,
+        });
         toast.success(`${updated.code} updated`);
         setDirty(false);
         navigate({ to: recordPath(entity, updated.code) as never });
       }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -167,7 +227,12 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
     <PermissionGuard
       action={mode === "new" ? "create" : "edit"}
       module={module}
-      fallback={<EmptyState title="You cannot edit this record" description="Your role does not include create/edit on this module." />}
+      fallback={
+        <EmptyState
+          title="You cannot edit this record"
+          description="Your role does not include create/edit on this module."
+        />
+      }
     >
       <RecordHeader
         code={displayCode}
@@ -176,20 +241,82 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         backTo={list}
         onBack={back}
         backLabel={def.label}
-        subtitle={mode === "new" ? "Draft will stay in the local store until Django is connected." : undefined}
+        subtitle={
+          isProductForm && mode === "new"
+            ? codeMode === "auto"
+              ? "Product code will be generated by the system from the product type."
+              : "Enter your own product / SKU code."
+            : mode === "new"
+              ? "New record"
+              : undefined
+        }
         actions={
           <>
-            <Button variant="outline" size="sm" type="button" onClick={back}>
+            <Button variant="outline" size="sm" type="button" onClick={back} disabled={saving}>
               Cancel
             </Button>
-            <Button size="sm" type="button" onClick={save}>
-              Save
+            <Button size="sm" type="button" onClick={save} disabled={saving}>
+              {saving ? "Saving…" : "Save"}
             </Button>
           </>
         }
       />
 
       <div className="space-y-6">
+        {isProductForm && mode === "new" && (
+          <Card className="rounded-2xl border-border/60">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Product code</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <RadioGroup
+                value={codeMode}
+                onValueChange={(v) => {
+                  setDirty(true);
+                  setCodeMode(v as "auto" | "manual");
+                }}
+                className="grid gap-3 sm:grid-cols-2"
+              >
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                  <RadioGroupItem value="auto" id="code-auto" className="mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium">Auto-generate</p>
+                    <p className="text-xs text-muted-foreground">
+                      System assigns the next code (e.g. RM-001, FG-001) from product type.
+                    </p>
+                  </div>
+                </label>
+                <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-muted/20 p-3 has-[[data-state=checked]]:border-primary has-[[data-state=checked]]:bg-primary/5">
+                  <RadioGroupItem value="manual" id="code-manual" className="mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium">Enter manually</p>
+                    <p className="text-xs text-muted-foreground">Use your own SKU / item code.</p>
+                  </div>
+                </label>
+              </RadioGroup>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="product-code">{codeMode === "auto" ? "Generated code" : "Product code"}</Label>
+                {codeMode === "auto" ? (
+                  <Input id="product-code" value={autoCode} readOnly className="bg-muted/40 font-mono" />
+                ) : (
+                  <Input
+                    id="product-code"
+                    value={manualCode}
+                    onChange={(e) => {
+                      setDirty(true);
+                      setManualCode(e.target.value.toUpperCase());
+                    }}
+                    placeholder="e.g. RM-PLA-001"
+                    className="font-mono"
+                    autoComplete="off"
+                  />
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {sections.map(([title, sectionFields]) => (
           <Card key={title} className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">
