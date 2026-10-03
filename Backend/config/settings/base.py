@@ -277,15 +277,18 @@ ERP_ACCOUNT_LOCKOUT_ATTEMPTS = env.int("ERP_ACCOUNT_LOCKOUT_ATTEMPTS", default=5
 ERP_ACCOUNT_LOCKOUT_MINUTES = env.int("ERP_ACCOUNT_LOCKOUT_MINUTES", default=15)
 ERP_ALLOW_NEGATIVE_STOCK = env.bool("ERP_ALLOW_NEGATIVE_STOCK", default=False)
 
-# Adapter configuration only — no live calls are made in Phase A.
+# Adapter configuration only — live OCR/scan uses Gemini after core system is complete (S6c).
 ERP_INTEGRATIONS = {
     "OPENAI_API_KEY": env("OPENAI_API_KEY", default=""),
     "GOOGLE_GEMINI_API_KEY": env("GOOGLE_GEMINI_API_KEY", default=""),
+    "GEMINI_MODEL": env("GEMINI_MODEL", default="gemini-2.0-flash"),
     "WHATSAPP_BUSINESS_TOKEN": env("WHATSAPP_BUSINESS_TOKEN", default=""),
     "SMS_GATEWAY_API_KEY": env("SMS_GATEWAY_API_KEY", default=""),
     "IRD_CBMS_API_BASE_URL": env("IRD_CBMS_API_BASE_URL", default=""),
     "IRD_CBMS_API_KEY": env("IRD_CBMS_API_KEY", default=""),
-    "OCR_PROVIDER_API_KEY": env("OCR_PROVIDER_API_KEY", default=""),
+    # Prefer GOOGLE_GEMINI_API_KEY; OCR_PROVIDER_API_KEY is a legacy alias.
+    "OCR_PROVIDER_API_KEY": env("OCR_PROVIDER_API_KEY", default="")
+    or env("GOOGLE_GEMINI_API_KEY", default=""),
 }
 
 # --------------------------------------------------------------------------
