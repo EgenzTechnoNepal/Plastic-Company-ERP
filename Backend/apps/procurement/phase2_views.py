@@ -280,6 +280,39 @@ class GateEntryViewSet(InboundMasterViewSet):
         updated = cancel_gate_entry(gate=gate, user=request.user)
         return envelope(GateEntrySerializer(updated).data)
 
+    @action(detail=False, methods=["post"], url_path="record")
+    def record(self, request):
+        from apps.procurement.commercial import PurchaseOrder
+        from apps.procurement.inbound_journey import record_gate_entry, scoped_get
+
+        po = scoped_get(
+            PurchaseOrder.objects.select_related("supplier", "company"),
+            request.user,
+            request.data.get("purchase_order"),
+            label="Purchase order",
+        )
+        gate = record_gate_entry(
+            purchase_order=po,
+            vehicle_number=request.data.get("vehicle_number") or "",
+            driver_name=request.data.get("driver_name") or "",
+            remarks=request.data.get("remarks") or "",
+            user=request.user,
+        )
+        response = envelope(GateEntrySerializer(gate).data)
+        response.status_code = status.HTTP_201_CREATED
+        return response
+
+    @action(detail=True, methods=["post"], url_path="receive")
+    def receive(self, request, pk=None):
+        from apps.procurement.inbound_journey import receive_against_gate
+
+        grn = receive_against_gate(
+            gate=self.get_object(), lines=request.data.get("lines") or [], user=request.user
+        )
+        response = envelope(GoodsReceiptNoteSerializer(grn).data)
+        response.status_code = status.HTTP_201_CREATED
+        return response
+
 
 class GoodsReceiptViewSet(InboundMasterViewSet):
     queryset = GoodsReceiptNote.objects.prefetch_related("lines").select_related(

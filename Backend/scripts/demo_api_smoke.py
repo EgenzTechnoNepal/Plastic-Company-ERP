@@ -98,6 +98,40 @@ if po_row:
         check(f"{label} linked to {po_row.get('document_number')}", str(linked) == str(po_row["id"]), f"purchase_order={linked}")
 
 if po_row:
+    status, journey = call("GET", f"/purchase/purchase-orders/{po_row['id']}/inbound-journey/", token)
+    journey = unwrap(journey) if status == 200 else {}
+    lot = next((x for x in journey.get("lots", []) if x.get("lot_number") == "LOT-M2-PLA-001"), {})
+    check(
+        "inbound journey: lot AVAILABLE in storage, landed 1280 / purchase 1000",
+        lot.get("status") == "AVAILABLE"
+        and (lot.get("bin") or {}).get("type") not in ("QC_HOLD", "RECEIVING")
+        and float(lot.get("landed_unit_cost") or 0) == 1280
+        and float(lot.get("purchase_unit_cost") or 0) == 1000,
+        f"HTTP {status}, status={lot.get('status')}, bin={(lot.get('bin') or {}).get('code')}, "
+        f"landed={lot.get('landed_unit_cost')}, purchase={lot.get('purchase_unit_cost')}",
+    )
+    lc = journey.get("letter_of_credit") or {}
+    check(
+        "inbound journey: LC check labelled rules-based",
+        (lc.get("match") or {}).get("engine_kind") == "rules" and "AI" not in lc.get("status_label", ""),
+        f"engine={(lc.get('match') or {}).get('engine')}, label={lc.get('status_label')}",
+    )
+
+status, blocked_po = find(token, "/purchase/purchase-orders/", "PO-M2-DEMO-003")
+if blocked_po:
+    status, payload = call(
+        "POST", "/purchase/inbound-gates/record/", token,
+        {"purchase_order": blocked_po["id"], "vehicle_number": "SMOKE-0001"},
+    )
+    code = (payload.get("error") or {}).get("code") if isinstance(payload, dict) else None
+    _, blocked_journey = call("GET", f"/purchase/purchase-orders/{blocked_po['id']}/inbound-journey/", token)
+    gates = (unwrap(blocked_journey) or {}).get("gates", [])
+    check("LC gate blocks gate entry (no gate created)", status == 400 and code == "LC_GATE_BLOCKED" and not gates,
+          f"HTTP {status}, code={code}, gates={len(gates)}")
+else:
+    check("PO-M2-DEMO-003 present", False, f"HTTP {status}")
+
+if po_row:
     approval_body = {
         "company": po_row["company"],
         "module_code": "purchase",

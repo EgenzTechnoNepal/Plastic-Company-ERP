@@ -27,7 +27,7 @@ BS_MONTH_NAMES = [
 
 MODULES = [
     "organization", "accounts", "audit", "system",
-    "crm", "sales", "procurement", "inventory", "warehouse", "production",
+    "crm", "sales", "purchase", "procurement", "inventory", "warehouse", "production",
     "planning", "quality", "accounting", "hr", "payroll", "reports",
     "workflow", "notifications", "documents", "compliance", "integrations", "analytics",
 ]
@@ -153,7 +153,7 @@ class Command(BaseCommand):
                 ],
             ),
             "sales": (["crm", "sales", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT, Action.SUBMIT]),
-            "purchase": (["procurement", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT, Action.SUBMIT]),
+            "purchase": (["purchase", "procurement", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT, Action.SUBMIT]),
             "warehouse": (["inventory", "warehouse", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT]),
             "production": (["production", "planning", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT]),
             "hr": (["hr", "payroll", "reports"], [Action.VIEW, Action.CREATE, Action.EDIT]),

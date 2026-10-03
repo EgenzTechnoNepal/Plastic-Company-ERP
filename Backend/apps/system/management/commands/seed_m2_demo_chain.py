@@ -104,6 +104,14 @@ SO_DOC = "SO-M2-DEMO-001"
 DN_DOC = "DN-M2-DEMO-001"
 INV_DOC = "INV-M2-DEMO-001"
 
+# Live-demo POs: nothing received yet, so the presenter walks Gate → GRN → QC → Landed in the UI.
+LIVE_PO_DOC = "PO-M2-DEMO-002"
+LIVE_PI_DOC = "PI-M2-DEMO-002"
+LIVE_LC_DOC = "LC-M2-DEMO-002"
+BLOCKED_PO_DOC = "PO-M2-DEMO-003"
+BLOCKED_PI_DOC = "PI-M2-DEMO-003"
+BLOCKED_LC_DOC = "LC-M2-DEMO-003"
+
 PLA_QTY = Decimal("100")
 PLA_PRICE = Decimal("1000")
 LC_REQUIRED_DOCS = ["commercial_invoice", "packing_list", "bill_of_lading", "coa"]
@@ -126,25 +134,35 @@ def _ensure_company_and_users():
     return company
 
 
-def _ensure_trade_finance(*, company, po, user) -> tuple[ProformaInvoice, LetterOfCredit]:
-    """PI + LC for the demo PO, walked through every LC step to DOCS_CLEARED."""
-    pi = ProformaInvoice.objects.filter(company=company, document_number=PI_DOC).first()
+def _ensure_trade_finance(
+    *,
+    company,
+    po,
+    user,
+    pi_doc: str = PI_DOC,
+    lc_doc: str = LC_DOC,
+    seller_pi_number: str = "CN-PI-2026-0418",
+    final_lc_number: str = "DCB-LC-DEMO-0001",
+    stop_at: str = LetterOfCreditStatus.DOCS_CLEARED,
+) -> tuple[ProformaInvoice, LetterOfCredit]:
+    """PI + LC for a demo PO, walked through the LC steps until `stop_at` (default DOCS_CLEARED)."""
+    pi = ProformaInvoice.objects.filter(company=company, document_number=pi_doc).first()
     if pi is None:
         pi = create_proforma_invoice(
             company=company,
             purchase_order=po,
             user=user,
             status=ProformaInvoiceStatus.ACCEPTED,
-            seller_pi_number="CN-PI-2026-0418",
+            seller_pi_number=seller_pi_number,
             currency_code="NPR",
             total_amount=PLA_QTY * PLA_PRICE,
             payment_terms="LC at sight",
             lead_time_days=30,
             notes="M2 demo proforma — PLA 100 KG",
         )
-        _rename(pi, "document_number", PI_DOC)
+        _rename(pi, "document_number", pi_doc)
 
-    lc = LetterOfCredit.objects.filter(company=company, document_number=LC_DOC).first()
+    lc = LetterOfCredit.objects.filter(company=company, document_number=lc_doc).first()
     if lc is None:
         today = timezone.now().date()
         lc = create_letter_of_credit(
@@ -159,12 +177,12 @@ def _ensure_trade_finance(*, company, po, user) -> tuple[ProformaInvoice, Letter
             expiry_date=today + timedelta(days=60),
             notes="M2 demo LC",
         )
-        _rename(lc, "document_number", LC_DOC)
+        _rename(lc, "document_number", lc_doc)
 
     for _ in range(10):
         lc.refresh_from_db()
         status = lc.status
-        if status == LetterOfCreditStatus.DOCS_CLEARED:
+        if status == stop_at or status == LetterOfCreditStatus.DOCS_CLEARED:
             break
         if status == LetterOfCreditStatus.DRAFT:
             attach_draft_lc_scan(
@@ -184,7 +202,7 @@ def _ensure_trade_finance(*, company, po, user) -> tuple[ProformaInvoice, Letter
         elif status == LetterOfCreditStatus.AI_MATCH_PASSED:
             record_seller_draft_ok(lc, note="Seller confirmed draft LC terms.", user=user)
         elif status == LetterOfCreditStatus.SELLER_APPROVED:
-            issue_final_lc(lc, final_lc_number="DCB-LC-DEMO-0001", user=user)
+            issue_final_lc(lc, final_lc_number=final_lc_number, user=user)
         elif status == LetterOfCreditStatus.FINAL_ISSUED:
             mark_manufacturing(lc, user=user)
         elif status in {
@@ -196,9 +214,43 @@ def _ensure_trade_finance(*, company, po, user) -> tuple[ProformaInvoice, Letter
         else:
             raise CommandError(f"Demo LC is {status}; cannot reach DOCS_CLEARED.")
     lc.refresh_from_db()
-    if lc.status != LetterOfCreditStatus.DOCS_CLEARED:
+    if lc.status not in {stop_at, LetterOfCreditStatus.DOCS_CLEARED}:
         raise CommandError(f"Demo LC stuck at {lc.status}.")
     return pi, lc
+
+
+def _ensure_open_po(*, company, document_number, supplier, item, uom, warehouse, incoterm, currency, user, notes):
+    """Approved + sent PO with one line and nothing received — the starting point of a live inbound demo."""
+    po = PurchaseOrder.objects.filter(company=company, document_number=document_number).first()
+    if po is not None:
+        return po
+    po = create_purchase_order(
+        company=company,
+        supplier=supplier,
+        user=user,
+        currency=currency,
+        destination_warehouse=warehouse,
+        incoterm=incoterm,
+        named_place="Shanghai",
+        payment_terms="LC 30 Days",
+        notes=notes,
+    )
+    _rename(po, "document_number", document_number)
+    add_po_line(
+        purchase_order=po,
+        item=item,
+        uom=uom,
+        ordered_quantity=PLA_QTY,
+        user=user,
+        unit_price=PLA_PRICE,
+        tax_pct=Decimal("0"),
+        destination_warehouse=warehouse,
+    )
+    submit_purchase_order(purchase_order=po, user=user)
+    approve_purchase_order(purchase_order=po, user=user)
+    mark_po_sent(purchase_order=po, user=user)
+    po.refresh_from_db()
+    return po
 
 
 def _assert_inbound_linked(*, po, pi, lc, grn, lot, inspection, lcd, putaway, bill) -> None:
@@ -563,6 +615,24 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
         po=po, pi=pi, lc=lc, grn=grn, lot=lot, inspection=inspection, lcd=lcd, putaway=putaway, bill=bill
     )
 
+    open_po_args = dict(
+        company=company, supplier=supplier_cn, item=pla, uom=kg, warehouse=warehouse,
+        incoterm=fob, currency=npr, user=user,
+    )
+    live_po = _ensure_open_po(document_number=LIVE_PO_DOC, notes="Live demo PO — PLA 100 KG", **open_po_args)
+    _, live_lc = _ensure_trade_finance(
+        company=company, po=live_po, user=user, pi_doc=LIVE_PI_DOC, lc_doc=LIVE_LC_DOC,
+        seller_pi_number="CN-PI-2026-0502", final_lc_number="DCB-LC-DEMO-0002",
+    )
+    blocked_po = _ensure_open_po(
+        document_number=BLOCKED_PO_DOC, notes="LC gate demo PO — documents not yet cleared", **open_po_args
+    )
+    _, blocked_lc = _ensure_trade_finance(
+        company=company, po=blocked_po, user=user, pi_doc=BLOCKED_PI_DOC, lc_doc=BLOCKED_LC_DOC,
+        seller_pi_number="CN-PI-2026-0519", final_lc_number="DCB-LC-DEMO-0003",
+        stop_at=LetterOfCreditStatus.MANUFACTURING,
+    )
+
     result = {
         "company_id": str(company.id),
         "users": sorted(
@@ -588,6 +658,8 @@ def run(*, interactive: bool = True, user: User | None = None) -> dict:
         "landed_unit_cost": str(lot.landed_unit_cost),
         "putaway": PUT_DOC if putaway else None,
         "bill": BILL_DOC if bill else None,
+        "live_po": f"{live_po.document_number} ({live_po.status}, LC {live_lc.status})",
+        "lc_blocked_po": f"{blocked_po.document_number} ({blocked_po.status}, LC {blocked_lc.status})",
         "interactive": interactive,
     }
 

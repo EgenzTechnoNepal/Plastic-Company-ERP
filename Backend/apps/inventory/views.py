@@ -179,6 +179,15 @@ class InventoryLotViewSet(InventoryMasterViewSet):
         updated = transition_lot_status(lot, ser.validated_data["status"], user=request.user)
         return envelope(InventoryLotSerializer(updated).data)
 
+    @action(detail=True, methods=["post"], url_path="landed-cost")
+    def landed_cost(self, request, pk=None):
+        from apps.procurement.inbound_journey import post_lot_landed_cost
+
+        result = post_lot_landed_cost(
+            lot=self.get_object(), components=request.data.get("components") or [], user=request.user
+        )
+        return envelope(result)
+
 
 class InventoryReceiptLayerViewSet(InventoryMasterViewSet):
     queryset = InventoryReceiptLayer.objects.select_related("lot", "item").all()

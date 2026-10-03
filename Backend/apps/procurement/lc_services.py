@@ -447,7 +447,7 @@ def lc_allows_gate_entry(lc: LetterOfCredit | None) -> tuple[bool, str]:
     }:
         return False, f"LC is {lc.status}."
     return False, lc.pre_dispatch_message or (
-        "Pre-dispatch documents not cleared as per LC. Do not accept at gate until AI/checklist passes."
+        "Pre-dispatch documents not cleared as per LC. Do not accept at gate until the LC document checklist is cleared."
     )
 
 

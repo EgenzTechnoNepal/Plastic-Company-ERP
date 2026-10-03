@@ -1,5 +1,8 @@
 import { useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { apiFetch } from "@/services/api/client";
+import { API_V1 } from "@/services/api/endpoints";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -43,7 +46,17 @@ function mapDto(dto: LetterOfCreditDto, prev: ErpRecord): ErpRecord {
   };
 }
 
-/** LC workflow: Gemini AI extract → human review → match → seller OK → Final → pre-dispatch. */
+function useGeminiConfigured(): boolean {
+  const { data } = useQuery({
+    queryKey: ["gemini-status"],
+    queryFn: () => apiFetch<{ configured: boolean }>(`${API_V1}/integrations/gemini/status/`, { silent: true }),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  return Boolean(data?.configured);
+}
+
+/** LC workflow: optional Gemini-assisted extract → human review → rules-based match → seller OK → Final → pre-dispatch. */
 export function LcWorkflowPanel({
   record,
   onUpdated,
@@ -52,6 +65,7 @@ export function LcWorkflowPanel({
   onUpdated?: (next: ErpRecord) => void;
 }) {
   const id = String(record.fields?.typedId ?? record.id);
+  const geminiConfigured = useGeminiConfigured();
   const [busy, setBusy] = useState(false);
   const [draftAmount, setDraftAmount] = useState(String(record.fields?.draftAmount ?? record.fields?.amount ?? ""));
   const [draftCurrency, setDraftCurrency] = useState(String(record.fields?.draftCurrency ?? record.fields?.currencyCode ?? "USD"));
@@ -126,9 +140,10 @@ export function LcWorkflowPanel({
   return (
     <Card className="rounded-2xl border-border/60">
       <CardHeader className="pb-2">
-        <CardTitle className="text-base">LC workflow (Gemini AI + approve)</CardTitle>
+        <CardTitle className="text-base">LC workflow</CardTitle>
         <p className="text-xs text-muted-foreground">
-          Upload → Gemini extracts → you review → match → seller OK → Final LC → pre-dispatch (भन्सार shield)
+          {geminiConfigured ? "Upload → Gemini suggests draft fields → you review" : "Enter draft LC fields"} → rules-based
+          PO/PI match → seller OK → Final LC → pre-dispatch checklist (भन्सार shield)
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -139,19 +154,21 @@ export function LcWorkflowPanel({
           <p className="text-sm text-muted-foreground">{String(record.fields.matchSummary)}</p>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={draftFileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={(e) => onAiDraftFile(e.target.files?.[0])}
-          />
-          <Button size="sm" type="button" disabled={busy} onClick={() => draftFileRef.current?.click()}>
-            AI scan Draft LC (Gemini)
-          </Button>
-          <span className="text-xs text-muted-foreground">or fill fields manually</span>
-        </div>
+        {geminiConfigured && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              ref={draftFileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              className="hidden"
+              onChange={(e) => onAiDraftFile(e.target.files?.[0])}
+            />
+            <Button size="sm" type="button" disabled={busy} onClick={() => draftFileRef.current?.click()}>
+              Scan draft LC with Gemini (assistive)
+            </Button>
+            <span className="text-xs text-muted-foreground">or fill fields manually</span>
+          </div>
+        )}
 
         <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1">
@@ -189,7 +206,7 @@ export function LcWorkflowPanel({
           >
             1. Save Draft extract
           </Button>
-          <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcRunMatch(id), "AI match finished")}>
+          <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcRunMatch(id), "Rules-based match finished")}>
             2. Run match (PO + PI)
           </Button>
           <Button
@@ -231,9 +248,11 @@ export function LcWorkflowPanel({
               className="hidden"
               onChange={(e) => onAiPacketFiles(e.target.files)}
             />
-            <Button size="sm" type="button" variant="outline" disabled={busy} onClick={() => packetFileRef.current?.click()}>
-              AI suggest checklist (Gemini)
-            </Button>
+            {geminiConfigured && (
+              <Button size="sm" type="button" variant="outline" disabled={busy} onClick={() => packetFileRef.current?.click()}>
+                Suggest checklist with Gemini (assistive)
+              </Button>
+            )}
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {REQUIRED_KEYS.map((key) => (

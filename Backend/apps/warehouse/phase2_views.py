@@ -153,6 +153,23 @@ class PutawayViewSet(WarehouseOpsViewSet):
         updated = post_putaway(putaway=obj, user=request.user)
         return envelope(PutawayOrderSerializer(updated).data)
 
+    @action(detail=False, methods=["post"], url_path="for-lot")
+    def for_lot(self, request):
+        from apps.inventory.models import InventoryLot
+        from apps.procurement.inbound_journey import putaway_lot, scoped_get
+        from apps.warehouse.models import Bin
+
+        lot = scoped_get(InventoryLot.objects.all(), request.user, request.data.get("lot"), label="Lot")
+        to_bin = scoped_get(
+            Bin.objects.select_related("warehouse"),
+            request.user,
+            request.data.get("to_bin"),
+            company_field="warehouse__company",
+            label="Bin",
+        )
+        putaway = putaway_lot(lot=lot, to_bin=to_bin, user=request.user)
+        return envelope(PutawayOrderSerializer(putaway).data)
+
 
 class StockTransferTypedViewSet(WarehouseOpsViewSet):
     queryset = StockTransfer.objects.select_related("lot", "item").all()

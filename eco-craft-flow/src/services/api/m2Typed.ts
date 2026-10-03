@@ -181,30 +181,53 @@ export async function listTypedBins(): Promise<ErpRecord[]> {
   );
 }
 
+const PO_STATUS: Record<string, DocStatus> = {
+  DRAFT: "draft",
+  SUBMITTED: "pending_approval",
+  APPROVED: "approved",
+  SENT: "approved",
+  PARTIALLY_RECEIVED: "in_progress",
+  RECEIVED: "completed",
+  CLOSED: "closed",
+  CANCELLED: "cancelled",
+};
+
 export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
   const rows = await listRows<
     Named & {
       supplier?: string;
+      supplier_code?: string;
+      supplier_name?: string;
+      currency_code?: string;
+      payment_terms?: string;
+      expected_delivery_date?: string | null;
       notes?: string;
       lines?: Array<{
         id: string;
         item?: string;
+        item_sku?: string;
+        item_name?: string;
         ordered_quantity?: string;
         unit_price?: string;
+        discount_pct?: string;
+        tax_pct?: string;
         uom?: string;
+        uom_code?: string;
       }>;
     }
   >(PHASE3_TYPED_API.purchaseOrders);
   return rows.map((r) => {
     const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
       id: l.id || `l-${i}`,
-      item: String(l.item ?? ""),
-      description: "",
-      uom: String(l.uom ?? "KG"),
+      item: l.item_sku || String(l.item ?? ""),
+      description: l.item_name ?? "",
+      uom: l.uom_code || String(l.uom ?? ""),
       qty: Number(l.ordered_quantity ?? 0),
       rate: Number(l.unit_price ?? 0),
+      discountPct: Number(l.discount_pct ?? 0),
+      taxPct: Number(l.tax_pct ?? 0),
     }));
-    return baseRecord(
+    const record = baseRecord(
       "purchase_orders",
       r.id,
       r.document_number ?? r.id,
@@ -212,6 +235,11 @@ export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
       r.status ?? "draft",
       {
         supplier: r.supplier,
+        supplierName: r.supplier_name || r.supplier_code,
+        currency: r.currency_code,
+        paymentTerms: r.payment_terms,
+        deliveryDate: r.expected_delivery_date ?? undefined,
+        serverStatus: r.status,
         typedId: r.id,
         typedPurchaseOrderId: r.id,
       },
@@ -219,6 +247,7 @@ export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
       r.created_at,
       r.updated_at,
     );
+    return { ...record, status: PO_STATUS[String(r.status ?? "").toUpperCase()] ?? record.status };
   });
 }
 

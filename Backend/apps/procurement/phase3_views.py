@@ -39,6 +39,9 @@ from apps.procurement.po_services import (
 
 class PurchaseOrderLineSerializer(serializers.ModelSerializer):
     remaining_receivable = serializers.SerializerMethodField()
+    item_sku = serializers.CharField(source="item.sku", read_only=True)
+    item_name = serializers.CharField(source="item.name", read_only=True)
+    uom_code = serializers.CharField(source="uom.code", read_only=True)
 
     class Meta:
         model = PurchaseOrderLine
@@ -46,7 +49,10 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
             "id",
             "line_no",
             "item",
+            "item_sku",
+            "item_name",
             "uom",
+            "uom_code",
             "ordered_quantity",
             "received_quantity",
             "cancelled_quantity",
@@ -65,6 +71,9 @@ class PurchaseOrderLineSerializer(serializers.ModelSerializer):
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
     lines = PurchaseOrderLineSerializer(many=True, required=False)
+    supplier_code = serializers.CharField(source="supplier.code", read_only=True)
+    supplier_name = serializers.CharField(source="supplier.legal_name", read_only=True)
+    currency_code = serializers.CharField(source="currency.code", read_only=True, default="")
 
     class Meta:
         model = PurchaseOrder
@@ -73,7 +82,10 @@ class PurchaseOrderSerializer(serializers.ModelSerializer):
             "company",
             "document_number",
             "supplier",
+            "supplier_code",
+            "supplier_name",
             "currency",
+            "currency_code",
             "exchange_rate",
             "incoterm",
             "named_place",
@@ -103,9 +115,14 @@ class PurchaseOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
     permission_classes = [HasModulePermission]
     module_code = "purchase"
     company_field = "company"
-    queryset = PurchaseOrder.objects.prefetch_related("lines").all()
+    queryset = (
+        PurchaseOrder.objects.select_related("supplier", "currency")
+        .prefetch_related("lines__item", "lines__uom")
+        .all()
+    )
     serializer_class = PurchaseOrderSerializer
     filterset_fields = ["company", "supplier", "status"]
+    search_fields = ["document_number", "supplier__code", "supplier__legal_name"]
     http_method_names = ["get", "post", "head", "options"]
 
     def create(self, request, *args, **kwargs):
@@ -165,6 +182,16 @@ class PurchaseOrderViewSet(CompanyScopedMixin, viewsets.ModelViewSet):
                 "cancelled_qty": str(cancelled),
             }
         )
+
+    @action(detail=True, methods=["get"], url_path="inbound-journey")
+    def inbound_journey(self, request, pk=None):
+        from apps.procurement.inbound_journey import build_inbound_journey
+
+        po = (
+            PurchaseOrder.objects.select_related("supplier", "currency", "incoterm", "destination_warehouse")
+            .get(pk=self.get_object().pk)
+        )
+        return envelope(build_inbound_journey(po))
 
     @action(detail=True, methods=["post"], url_path="submit")
     def submit(self, request, pk=None):

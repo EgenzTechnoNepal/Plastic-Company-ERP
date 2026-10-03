@@ -41,6 +41,7 @@ import { CapaPipeline } from "@/features/quality/CapaPipeline";
 import { SupplierScorecard } from "@/features/quality/SupplierScorecard";
 import { LcWorkflowPanel } from "@/features/purchase/LcWorkflowPanel";
 import { LcGateGuardBanner } from "@/features/purchase/LcGateGuardBanner";
+import { InboundJourneyPanel } from "@/features/purchase/InboundJourneyPanel";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
@@ -107,6 +108,8 @@ export function RecordDetailPage() {
   const actions = workflowActions(record, def);
   // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
   const localPanels = !(isLiveSession() && isTypedEntity(entity));
+  const inboundPoId =
+    !localPanels && entity === "purchase_orders" ? String(record.fields.typedPurchaseOrderId ?? "") : "";
   const list = listPathFor(entity);
 
   const run = async (action: WorkflowAction, reason?: string) => {
@@ -169,7 +172,7 @@ export function RecordDetailPage() {
                     <QualityCycleActions entity={entity} record={record} module={module} />
                   </>
                 )}
-                {actions.includes("edit") && (
+                {actions.includes("edit") && !inboundPoId && (
                   <PermissionGuard action="edit" module={module}>
                     <Button size="sm" variant="outline" className="gap-1.5" asChild>
                       <Link to={recordEditPath(entity, record.code) as never}>
@@ -254,7 +257,8 @@ export function RecordDetailPage() {
         }
         main={
           <>
-            {sections.map(([title, fields]) => (
+            {inboundPoId && <InboundJourneyPanel purchaseOrderId={inboundPoId} />}
+            {!inboundPoId && sections.map(([title, fields]) => (
               <Card key={title} className="rounded-2xl border-border/60">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">{title}</CardTitle>
@@ -309,7 +313,7 @@ export function RecordDetailPage() {
             {entity === "quality_plans" && <PlanSpec plan={record} />}
             {entity === "capas" && <CapaPipeline capa={record} />}
             {localPanels && entity === "suppliers" && <SupplierScorecard supplier={record} />}
-            {def.lines && record.lines.length > 0 && (
+            {!inboundPoId && def.lines && record.lines.length > 0 && (
               <Card className="rounded-2xl border-border/60">
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base">{def.lines === "ledger" ? "Ledger lines" : "Line items"}</CardTitle>
@@ -319,7 +323,7 @@ export function RecordDetailPage() {
                 </CardContent>
               </Card>
             )}
-            <DocumentPreview record={record} def={def} />
+            {!inboundPoId && <DocumentPreview record={record} def={def} />}
           </>
         }
         sidebar={

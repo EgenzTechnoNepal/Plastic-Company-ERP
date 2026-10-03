@@ -401,7 +401,7 @@ export const ENTITIES: EntityDef[] = [
       f("draftCurrency", "Draft extracted currency", "text", { section: "Draft scan" }),
       f("draftBeneficiary", "Draft beneficiary", "text", { section: "Draft scan" }),
       f("matchSummary", "Match result", "textarea", { section: "Match", colSpan: 2 }),
-      f("preDispatchMessage", "Pre-dispatch AI message", "textarea", { section: "Pre-dispatch", colSpan: 2 }),
+      f("preDispatchMessage", "Pre-dispatch message", "textarea", { section: "Pre-dispatch", colSpan: 2 }),
       f("notes", "Notes", "textarea", { section: "Notes", colSpan: 2 }),
     ],
   },
