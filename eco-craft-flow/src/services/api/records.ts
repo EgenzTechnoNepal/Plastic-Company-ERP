@@ -195,6 +195,10 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedBin } = await import("./m2Typed");
     return createTypedBin(record);
   }
+  if (entity === "purchase_orders") {
+    const { createTypedPurchaseOrder } = await import("./m2Typed");
+    return createTypedPurchaseOrder(record);
+  }
   if (entity === "proforma_invoices") {
     const { createTypedProformaInvoice } = await import("./m2Typed");
     return createTypedProformaInvoice(record);

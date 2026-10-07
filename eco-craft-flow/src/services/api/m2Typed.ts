@@ -5,6 +5,7 @@
 import { API_V1 } from "./endpoints";
 import { apiFetch, apiFetchMeta } from "./client";
 import type { DocStatus, ErpRecord, LineItem } from "@/types/erp";
+import { PHASE1_TYPED_API } from "./phase1";
 import { PHASE2_TYPED_API } from "./phase2";
 import { PHASE3_TYPED_API } from "./phase3";
 
@@ -70,6 +71,26 @@ function baseRecord(
 }
 
 type Named = { id: string; code?: string; sku?: string; name?: string; legal_name?: string; trading_name?: string; document_number?: string; gate_entry_number?: string; grn_number?: string; inspection_number?: string; lot_number?: string; status?: string; is_active?: boolean; created_at?: string; updated_at?: string };
+
+export type TypedOption = { id: string; code: string; label: string };
+
+export async function listTypedUoms(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { symbol?: string }>(PHASE1_TYPED_API.uoms);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code ?? r.id,
+    label: [r.code, r.name || r.symbol].filter(Boolean).join(" - "),
+  }));
+}
+
+export async function listTypedCurrencies(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { symbol?: string }>(PHASE1_TYPED_API.currencies);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code ?? r.id,
+    label: [r.code, r.name || r.symbol].filter(Boolean).join(" - "),
+  }));
+}
 
 export async function listTypedSuppliers(): Promise<ErpRecord[]> {
   const rows = await listRows<Named & { country?: string; email?: string; phone?: string; payment_terms?: string }>(M2_TYPED_PATHS.vendors);
@@ -303,6 +324,46 @@ async function resolveWarehouseId(ref: unknown): Promise<string> {
   return hit.id;
 }
 
+async function resolveSupplierId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Supplier is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedSuppliers();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Supplier "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+async function resolveProductId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Item is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedProducts();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Item "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+async function resolvePurchaseUomId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("UOM is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedUoms();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.label === raw);
+  if (!hit) throw new Error(`UOM "${raw}" not found.`);
+  return hit.id;
+}
+
+async function resolveCurrencyId(ref: unknown): Promise<string | undefined> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return undefined;
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedCurrencies();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.label === raw);
+  if (!hit) throw new Error(`Currency "${raw}" not found.`);
+  return hit.id;
+}
+
 export async function createTypedBin(partial: Partial<ErpRecord>): Promise<ErpRecord> {
   const fields = (partial.fields ?? {}) as Record<string, unknown>;
   const warehouse = await resolveWarehouseId(fields.warehouse);
@@ -400,6 +461,108 @@ export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
     );
     return { ...record, status: PO_STATUS[String(r.status ?? "").toUpperCase()] ?? record.status };
   });
+}
+
+export async function createTypedPurchaseOrder(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const destinationWarehouseRef = fields.destinationWarehouse ?? fields.destination_warehouse;
+  const destinationWarehouse = destinationWarehouseRef ? await resolveWarehouseId(destinationWarehouseRef) : undefined;
+  const lines = partial.lines ?? [];
+  if (!lines.length) throw new Error("Add at least one purchase order line.");
+
+  const body: Record<string, unknown> = {
+    company,
+    supplier: await resolveSupplierId(fields.supplier),
+    exchange_rate: String(fields.exchangeRate ?? fields.exchange_rate ?? 1),
+    named_place: String(fields.namedPlace ?? fields.named_place ?? ""),
+    payment_terms: String(fields.paymentTerms ?? fields.payment_terms ?? ""),
+    notes: String(fields.notes ?? partial.title ?? ""),
+    lines: await Promise.all(
+      lines.map(async (line) => {
+        const lineWarehouseRef = line.warehouse || destinationWarehouseRef;
+        const item = await resolveProductId(line.item);
+        const uom = await resolvePurchaseUomId(line.uom);
+        const orderedQuantity = Number(line.qty);
+        if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) throw new Error("Ordered quantity must be greater than zero.");
+        const unitPrice = Number(line.rate);
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error("Unit price cannot be negative.");
+        const row: Record<string, unknown> = {
+          item,
+          uom,
+          ordered_quantity: String(orderedQuantity),
+          unit_price: String(unitPrice),
+          discount_pct: String(Number(line.discountPct ?? 0) || 0),
+          tax_pct: String(Number(line.taxPct ?? 0) || 0),
+          notes: line.description ?? "",
+        };
+        if (lineWarehouseRef) row.destination_warehouse = await resolveWarehouseId(lineWarehouseRef);
+        return row;
+      }),
+    ),
+  };
+  const currency = await resolveCurrencyId(fields.currency);
+  if (currency) body.currency = currency;
+  if (fields.incoterm) body.incoterm = fields.incoterm;
+  if (destinationWarehouse) body.destination_warehouse = destinationWarehouse;
+  if (fields.expectedDeliveryDate || fields.deliveryDate) body.expected_delivery_date = fields.expectedDeliveryDate ?? fields.deliveryDate;
+
+  const created = await apiFetch<
+    Named & {
+      supplier?: string;
+      supplier_code?: string;
+      supplier_name?: string;
+      currency_code?: string;
+      payment_terms?: string;
+      expected_delivery_date?: string | null;
+      notes?: string;
+      lines?: Array<{
+        id: string;
+        item?: string;
+        item_sku?: string;
+        item_name?: string;
+        ordered_quantity?: string;
+        unit_price?: string;
+        discount_pct?: string;
+        tax_pct?: string;
+        uom?: string;
+        uom_code?: string;
+      }>;
+    }
+  >(PHASE3_TYPED_API.purchaseOrders, { method: "POST", body, silent: true });
+
+  const createdLines: LineItem[] = (created.lines ?? []).map((line, i) => ({
+    id: line.id || `l-${i}`,
+    item: line.item_sku || String(line.item ?? ""),
+    description: line.item_name ?? "",
+    uom: line.uom_code || String(line.uom ?? ""),
+    qty: Number(line.ordered_quantity ?? 0),
+    rate: Number(line.unit_price ?? 0),
+    discountPct: Number(line.discount_pct ?? 0),
+    taxPct: Number(line.tax_pct ?? 0),
+  }));
+  const record = baseRecord(
+    "purchase_orders",
+    created.id,
+    created.document_number ?? created.id,
+    created.notes || created.document_number || "Purchase Order",
+    created.status ?? "DRAFT",
+    {
+      supplier: created.supplier,
+      supplierName: created.supplier_name || created.supplier_code,
+      currency: created.currency_code,
+      paymentTerms: created.payment_terms,
+      deliveryDate: created.expected_delivery_date ?? undefined,
+      serverStatus: created.status,
+      typedId: created.id,
+      typedPurchaseOrderId: created.id,
+    },
+    createdLines,
+    created.created_at,
+    created.updated_at,
+  );
+  return { ...record, status: PO_STATUS[String(created.status ?? "").toUpperCase()] ?? record.status };
 }
 
 export async function listTypedProformaInvoices(): Promise<ErpRecord[]> {

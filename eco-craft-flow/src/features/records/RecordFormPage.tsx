@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -6,6 +7,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PermissionGuard, fieldAccess } from "@/lib/permissions";
 import { useAuthStore, isLiveSession } from "@/store/auth";
@@ -15,12 +24,14 @@ import { RecordHeader } from "@/components/records/RecordHeader";
 import { FormSection, RecordField } from "@/components/records/FormSection";
 import { LineItemTable } from "@/components/records/LineItemTable";
 import { UnsavedChangesGuard } from "@/components/records/UnsavedChangesGuard";
+import { EntitySelector, WarehouseSelector } from "@/components/records/EntitySelector";
 import { isLocked } from "@/features/records/workflow";
 import { getService } from "@/services/catalog";
-import { makeLines, nextCode, useRecord } from "@/services/entityService";
+import { makeLines, newLineId, nextCode, useRecord, useRecords } from "@/services/entityService";
 import { docTotals } from "@/types/erp";
 import type { LineItem } from "@/types/erp";
-import { productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
+import { ApiError } from "@/services/api/client";
+import { listTypedCurrencies, listTypedUoms, productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -31,6 +42,211 @@ function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
     groups.set(key, arr);
   }
   return Array.from(groups.entries());
+}
+
+function errorText(value: unknown): string | undefined {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value.map((v) => errorText(v) ?? String(v)).join(" ");
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${k}: ${errorText(v) ?? String(v)}`)
+      .join(" ");
+  }
+  return String(value);
+}
+
+function formErrorFrom(err: unknown): { message: string; fields: Record<string, string> } {
+  if (err instanceof ApiError) {
+    const fields = Object.fromEntries(
+      Object.entries(err.fields ?? {}).map(([key, value]) => [key, errorText(value) ?? err.message]),
+    );
+    return { message: errorText(err.fields?.non_field_errors) ?? err.message, fields };
+  }
+  return { message: err instanceof Error ? err.message : "Save failed", fields: {} };
+}
+
+function validatePurchaseOrder(fields: Record<string, unknown>, lines: LineItem[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!String(fields.supplier ?? "").trim()) errors.supplier = "Supplier is required.";
+  if (!lines.length) errors.lines = "Add at least one purchase order line.";
+  lines.forEach((line, index) => {
+    const missing: string[] = [];
+    if (!String(line.item ?? "").trim()) missing.push("item");
+    if (!line.uom) missing.push("UOM");
+    if (!Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0) missing.push("quantity greater than zero");
+    if (!Number.isFinite(Number(line.rate)) || Number(line.rate) < 0) missing.push("unit price zero or greater");
+    if (missing.length) errors[`lines.${index}`] = `Line ${index + 1}: ${missing.join(", ")} required.`;
+  });
+  return errors;
+}
+
+function PurchaseOrderFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const currencies = useQuery({ queryKey: ["typed-options", "currencies"], queryFn: listTypedCurrencies, staleTime: 5 * 60_000 });
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Purchase order</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Header">
+          <div className="space-y-1.5">
+            <Label htmlFor="po-supplier">Supplier<span className="ml-0.5 text-destructive">*</span></Label>
+            <EntitySelector entity="suppliers" id="po-supplier" value={String(fields.supplier ?? "")} onChange={(v) => onChange("supplier", v)} disabled={disabled} />
+            {errors.supplier && <p className="text-xs font-medium text-destructive">{errors.supplier}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-delivery">Expected delivery</Label>
+            <Input id="po-delivery" type="date" value={String(fields.deliveryDate ?? "")} onChange={(e) => onChange("deliveryDate", e.target.value)} disabled={disabled} />
+            {(errors.expected_delivery_date || errors.deliveryDate) && <p className="text-xs font-medium text-destructive">{errors.expected_delivery_date ?? errors.deliveryDate}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-currency">Currency</Label>
+            <Select value={String(fields.currency ?? "") || undefined} onValueChange={(v) => onChange("currency", v)} disabled={disabled || currencies.isLoading}>
+              <SelectTrigger id="po-currency">
+                <SelectValue placeholder={currencies.isLoading ? "Loading currencies..." : "Select currency..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {(currencies.data ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.code}>{c.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.currency && <p className="text-xs font-medium text-destructive">{errors.currency}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-exchange-rate">Exchange rate</Label>
+            <Input id="po-exchange-rate" type="number" min="0" step="0.000001" value={String(fields.exchangeRate ?? 1)} onChange={(e) => onChange("exchangeRate", e.target.value)} disabled={disabled} />
+            {errors.exchange_rate && <p className="text-xs font-medium text-destructive">{errors.exchange_rate}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-warehouse">Destination warehouse</Label>
+            <WarehouseSelector id="po-warehouse" value={String(fields.destinationWarehouse ?? "")} onChange={(v) => onChange("destinationWarehouse", v)} disabled={disabled} />
+            {errors.destination_warehouse && <p className="text-xs font-medium text-destructive">{errors.destination_warehouse}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-payment-terms">Payment terms</Label>
+            <Input id="po-payment-terms" value={String(fields.paymentTerms ?? "")} onChange={(e) => onChange("paymentTerms", e.target.value)} disabled={disabled} />
+            {errors.payment_terms && <p className="text-xs font-medium text-destructive">{errors.payment_terms}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="po-named-place">Named place</Label>
+            <Input id="po-named-place" value={String(fields.namedPlace ?? "")} onChange={(e) => onChange("namedPlace", e.target.value)} disabled={disabled} />
+            {errors.named_place && <p className="text-xs font-medium text-destructive">{errors.named_place}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="po-notes">Notes</Label>
+            <Textarea id="po-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PurchaseOrderLineEditor({
+  lines,
+  onChange,
+  errors,
+  disabled,
+}: {
+  lines: LineItem[];
+  onChange: (lines: LineItem[]) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const products = useRecords("products");
+  const warehouses = useRecords("warehouses");
+  const uoms = useQuery({ queryKey: ["typed-options", "uoms"], queryFn: listTypedUoms, staleTime: 5 * 60_000 });
+  const update = (id: string, next: Partial<LineItem>) => onChange(lines.map((l) => (l.id === id ? { ...l, ...next } : l)));
+  const add = () => onChange([...lines, { id: newLineId(), item: "", description: "", uom: "", warehouse: "", qty: 1, rate: 0, discountPct: 0, taxPct: 0 }]);
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Purchase order lines</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {errors.lines && <p className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">{errors.lines}</p>}
+        {lines.map((line, index) => (
+          <div key={line.id} className="grid gap-3 rounded-lg border border-border/70 p-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5 lg:col-span-2">
+              <Label>Item<span className="ml-0.5 text-destructive">*</span></Label>
+              <Select value={line.item || undefined} onValueChange={(v) => update(line.id, { item: v })} disabled={disabled}>
+                <SelectTrigger><SelectValue placeholder="Select item..." /></SelectTrigger>
+                <SelectContent>
+                  {products.map((p) => (
+                    <SelectItem key={p.id} value={p.code}>{p.code} - {p.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>UOM<span className="ml-0.5 text-destructive">*</span></Label>
+              <Select value={line.uom || undefined} onValueChange={(v) => update(line.id, { uom: v })} disabled={disabled || uoms.isLoading}>
+                <SelectTrigger><SelectValue placeholder={uoms.isLoading ? "Loading..." : "Select UOM..."} /></SelectTrigger>
+                <SelectContent>
+                  {(uoms.data ?? []).map((u) => (
+                    <SelectItem key={u.id} value={u.code}>{u.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Warehouse</Label>
+              <Select value={line.warehouse || undefined} onValueChange={(v) => update(line.id, { warehouse: v })} disabled={disabled}>
+                <SelectTrigger><SelectValue placeholder="Use header" /></SelectTrigger>
+                <SelectContent>
+                  {warehouses.map((w) => (
+                    <SelectItem key={w.id} value={w.code}>{w.code} - {w.title}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Ordered quantity<span className="ml-0.5 text-destructive">*</span></Label>
+              <Input type="number" min="0" step="0.001" value={line.qty} onChange={(e) => update(line.id, { qty: Number(e.target.value) || 0 })} disabled={disabled} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Unit price</Label>
+              <Input type="number" min="0" step="0.01" value={line.rate} onChange={(e) => update(line.id, { rate: Number(e.target.value) || 0 })} disabled={disabled} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Discount %</Label>
+              <Input type="number" min="0" step="0.01" value={line.discountPct ?? 0} onChange={(e) => update(line.id, { discountPct: Number(e.target.value) || 0 })} disabled={disabled} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Tax %</Label>
+              <Input type="number" min="0" step="0.01" value={line.taxPct ?? 0} onChange={(e) => update(line.id, { taxPct: Number(e.target.value) || 0 })} disabled={disabled} />
+            </div>
+            <div className="space-y-1.5 lg:col-span-3">
+              <Label>Line notes</Label>
+              <Input value={line.description ?? ""} onChange={(e) => update(line.id, { description: e.target.value })} disabled={disabled} />
+            </div>
+            <div className="flex items-end justify-end">
+              <Button type="button" variant="ghost" size="sm" onClick={() => onChange(lines.filter((l) => l.id !== line.id))} disabled={disabled || lines.length <= 1}>
+                Remove
+              </Button>
+            </div>
+            {errors[`lines.${index}`] && <p className="text-xs font-medium text-destructive sm:col-span-2 lg:col-span-4">{errors[`lines.${index}`]}</p>}
+          </div>
+        ))}
+        <div className="flex items-center justify-between gap-3">
+          <Button type="button" variant="outline" size="sm" onClick={add} disabled={disabled}>Add line</Button>
+          <p className="text-sm font-medium">Total {docTotals(lines).total.toLocaleString("en-IN")} NPR</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
@@ -45,6 +261,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const existing = useRecord(entity, code);
   const navigate = useNavigate();
   const isProductForm = entity === "products";
+  const isPurchaseOrderForm = entity === "purchase_orders";
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
@@ -58,9 +275,13 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       fields.uom = fields.uom || "KG";
       fields.codeMode = "auto";
     }
+    if (isPurchaseOrderForm && mode === "new") {
+      fields.exchangeRate = fields.exchangeRate || 1;
+      fields.currency = fields.currency || "NPR";
+    }
     return fields;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode, isProductForm]);
+  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {
@@ -77,16 +298,28 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
     nextCode("products", productSkuPrefix(String(initialFields.type || "Raw Material"))),
   );
   const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     setFields(initialFields);
-    setLines(existing?.lines.length ? existing.lines : def?.lines ? makeLines(1) : []);
+    setLines(
+      existing?.lines.length
+        ? existing.lines
+        : def?.lines
+          ? isPurchaseOrderForm
+            ? [{ id: newLineId(), item: "", description: "", uom: "", warehouse: "", qty: 1, rate: 0, discountPct: 0, taxPct: 0 }]
+            : makeLines(1)
+          : [],
+    );
     setDirty(false);
+    setFormError("");
+    setFieldErrors({});
     if (mode === "new" && isProductForm) {
       setCodeMode("auto");
       setManualCode("");
     }
-  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines, isProductForm]);
+  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines, isProductForm, isPurchaseOrderForm]);
 
   useEffect(() => {
     if (!isProductForm || mode !== "new" || codeMode !== "auto") return;
@@ -156,10 +389,27 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
   const setField = (key: string, value: unknown) => {
     setDirty(true);
+    setFieldErrors((s) => {
+      if (!s[key]) return s;
+      const next = { ...s };
+      delete next[key];
+      return next;
+    });
     setFields((s) => ({ ...s, [key]: value }));
   };
 
   const save = async () => {
+    if (saving) return;
+    setFormError("");
+    setFieldErrors({});
+    if (isPurchaseOrderForm && mode === "new") {
+      const poErrors = validatePurchaseOrder(fields, lines);
+      if (Object.keys(poErrors).length) {
+        setFieldErrors(poErrors);
+        toast.error("Fix the highlighted Purchase Order fields.");
+        return;
+      }
+    }
     if (def.lines === "ledger") {
       const debit = lines.reduce((s, l) => s + (l.debit || 0), 0);
       const credit = lines.reduce((s, l) => s + (l.credit || 0), 0);
@@ -207,7 +457,10 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         navigate({ to: recordPath(entity, updated.code) as never });
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      const nextError = formErrorFrom(err);
+      setFormError(nextError.message);
+      setFieldErrors(nextError.fields);
+      toast.error(nextError.message);
     } finally {
       setSaving(false);
     }
@@ -263,6 +516,12 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       />
 
       <div className="space-y-6">
+        {formError && (
+          <Card className="rounded-2xl border-destructive/40 bg-destructive/5">
+            <CardContent className="py-3 text-sm font-medium text-destructive">{formError}</CardContent>
+          </Card>
+        )}
+
         {isProductForm && mode === "new" && (
           <Card className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">
@@ -317,7 +576,9 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
           </Card>
         )}
 
-        {sections.map(([title, sectionFields]) => (
+        {isPurchaseOrderForm && mode === "new" ? (
+          <PurchaseOrderFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : sections.map(([title, sectionFields]) => (
           <Card key={title} className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">{title}</CardTitle>
@@ -331,6 +592,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
                     value={fields[f.key]}
                     onChange={(v) => setField(f.key, v)}
                     entity={entity}
+                    error={fieldErrors[f.key]}
                   />
                 ))}
               </FormSection>
@@ -338,7 +600,23 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
           </Card>
         ))}
 
-        {def.lines && (
+        {isPurchaseOrderForm && mode === "new" ? (
+          <PurchaseOrderLineEditor
+            lines={lines}
+            onChange={(next) => {
+              setDirty(true);
+              setLines(next);
+              setFieldErrors((s) => {
+                if (!Object.keys(s).some((key) => key === "lines" || key.startsWith("lines."))) return s;
+                const nextErrors = { ...s };
+                for (const key of Object.keys(nextErrors)) if (key === "lines" || key.startsWith("lines.")) delete nextErrors[key];
+                return nextErrors;
+              });
+            }}
+            errors={fieldErrors}
+            disabled={saving}
+          />
+        ) : def.lines && (
           <Card className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">{def.lines === "ledger" ? "Ledger lines" : "Line items"}</CardTitle>
