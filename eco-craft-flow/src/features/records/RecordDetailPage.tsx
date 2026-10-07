@@ -20,6 +20,8 @@ import { Customer360 } from "@/features/crm/Customer360";
 import { SlaClock } from "@/features/crm/SlaClock";
 import { CycleActions } from "@/features/sales/CycleActions";
 import { FulfillmentPanel } from "@/features/sales/FulfillmentPanel";
+import { SalesWorkflowPanel } from "@/features/sales/SalesWorkflowPanel";
+import { SalesDocumentActions } from "@/features/sales/SalesDocumentActions";
 import { PurchaseCycleActions } from "@/features/purchase/CycleActions";
 import { RfqCompare } from "@/features/purchase/RfqCompare";
 import { ThreeWayMatchPanel } from "@/features/purchase/ThreeWayMatchPanel";
@@ -138,7 +140,8 @@ export function RecordDetailPage() {
 
   const svc = getService(entity);
   const liveInboundActions = isLiveSession() && (entity === "gate_entries" || entity === "grns");
-  const actions = liveInboundActions ? [] : workflowActions(record, def);
+  const liveSalesDocActions = isLiveSession() && isTypedEntity(entity) && (entity === "deliveries" || entity === "invoices");
+  const actions = liveInboundActions || liveSalesDocActions ? [] : workflowActions(record, def);
   // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
   const localPanels = !(isLiveSession() && isTypedEntity(entity));
   const inboundPoId =
@@ -313,6 +316,8 @@ export function RecordDetailPage() {
             {entity === "inventory_lots" && <InventoryLotPanel record={record} />}
             {entity === "tickets" && <SlaClock ticket={record} />}
             {localPanels && entity === "sales_orders" && <FulfillmentPanel order={record} />}
+            {!localPanels && entity === "sales_orders" && <SalesWorkflowPanel order={record} />}
+            {liveSalesDocActions && <SalesDocumentActions entity={entity} record={record} />}
             {entity === "rfqs" && <RfqCompare rfq={record} />}
             {localPanels && entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}

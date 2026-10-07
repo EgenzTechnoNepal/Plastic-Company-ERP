@@ -54,6 +54,7 @@ export interface LineItem {
   rate: number;
   discountPct?: number;
   taxPct?: number;
+  salesOrderLineId?: string;
   /** debit/credit grids reuse these */
   debit?: number;
   credit?: number;

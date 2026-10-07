@@ -102,6 +102,13 @@ export function confirmSalesOrder(id: string) {
   });
 }
 
+export function releaseSalesOrderReservations(id: string) {
+  return apiFetch<SalesOrderDto>(PHASE3_TYPED_API.salesOrderReleaseReservations(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
 /** Server-authoritative 3-way match. Client threeWayMatch() is display-only. */
 export function matchSupplierBill(id: string) {
   return apiFetch<SupplierBillDto>(PHASE3_TYPED_API.supplierBillMatch(id), {

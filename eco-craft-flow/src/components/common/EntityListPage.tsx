@@ -45,7 +45,7 @@ const PROCUREMENT_FILTERS: Record<
   Array<{
     key: keyof TypedListQuery | "active";
     placeholder: string;
-    options: "status" | "supplier" | "purchase_order" | "warehouse" | "active" | "txn_type";
+    options: "status" | "supplier" | "purchase_order" | "sales_order" | "warehouse" | "active" | "txn_type";
   }>
 > = {
   purchase_orders: [
@@ -99,6 +99,16 @@ const PROCUREMENT_FILTERS: Record<
   putaways: [
     { key: "status", placeholder: "All status", options: "status" },
   ],
+  sales_orders: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
+  deliveries: [
+    { key: "status", placeholder: "All status", options: "status" },
+    { key: "sales_order", placeholder: "All sales orders", options: "sales_order" },
+  ],
+  invoices: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
 };
 
 const PROCUREMENT_STATUSES: Record<string, string[]> = {
@@ -126,6 +136,9 @@ const PROCUREMENT_STATUSES: Record<string, string[]> = {
   stock_reservations: ["OPEN", "RELEASED", "CANCELLED"],
   stock_transfers: ["DRAFT", "POSTED"],
   putaways: ["DRAFT", "POSTED"],
+  sales_orders: ["DRAFT", "CONFIRMED", "PARTIALLY_RESERVED", "RESERVED", "PARTIALLY_DISPATCHED", "DISPATCHED", "PARTIALLY_INVOICED", "INVOICED", "COMPLETED", "CANCELLED"],
+  deliveries: ["DRAFT", "POSTED", "CANCELLED"],
+  invoices: ["DRAFT", "POSTED", "CANCELLED"],
 };
 
 const INVENTORY_TXN_TYPES = [
@@ -275,6 +288,7 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
   const debouncedQuery = useDebouncedValue(query.trim(), 300);
   const suppliers = useRecords("suppliers");
   const purchaseOrders = useRecords("purchase_orders");
+  const salesOrders = useRecords("sales_orders");
   const warehouses = useRecords("warehouses");
   const apiQuery = useMemo<TypedListQuery>(() => {
     const next: TypedListQuery = {};
@@ -301,6 +315,8 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
           ? suppliers.map((s) => ({ value: s.id, label: `${s.code} - ${s.title}` }))
           : item.options === "purchase_order"
             ? purchaseOrders.map((po) => ({ value: po.id, label: `${po.code} - ${po.title}` }))
+            : item.options === "sales_order"
+              ? salesOrders.map((so) => ({ value: so.id, label: `${so.code} - ${so.title}` }))
             : item.options === "warehouse"
               ? warehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.title}` }))
               : item.options === "txn_type"

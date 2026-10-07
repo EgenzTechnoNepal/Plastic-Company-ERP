@@ -41,6 +41,9 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "stock_reservations",
   "stock_transfers",
   "putaways",
+  "sales_orders",
+  "deliveries",
+  "invoices",
 ]);
 
 export function isTypedEntity(entity: string): boolean {

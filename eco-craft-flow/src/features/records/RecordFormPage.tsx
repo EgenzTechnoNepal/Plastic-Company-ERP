@@ -85,6 +85,47 @@ function validatePurchaseOrder(fields: Record<string, unknown>, lines: LineItem[
   return errors;
 }
 
+function validateSalesOrder(fields: Record<string, unknown>, lines: LineItem[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!String(fields.customer ?? "").trim()) errors.customer = "Customer is required.";
+  if (!lines.length) errors.lines = "Add at least one sales order line.";
+  lines.forEach((line, index) => {
+    const missing: string[] = [];
+    if (!String(line.item ?? "").trim()) missing.push("item");
+    if (!String(line.uom ?? "").trim()) missing.push("UOM");
+    if (!Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0) missing.push("quantity greater than zero");
+    if (!Number.isFinite(Number(line.rate)) || Number(line.rate) < 0) missing.push("unit price zero or greater");
+    if (missing.length) errors[`lines.${index}`] = `Line ${index + 1}: ${missing.join(", ")} required.`;
+  });
+  return errors;
+}
+
+function validateDispatch(fields: Record<string, unknown>, lines: LineItem[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!String(fields.salesOrder ?? "").trim()) errors.salesOrder = "Sales Order is required.";
+  if (!lines.length) errors.lines = "Add at least one dispatch line.";
+  lines.forEach((line, index) => {
+    if (!String(line.salesOrderLineId || line.item || "").trim()) errors[`lines.${index}`] = `Line ${index + 1}: Sales Order line is required.`;
+    if (!Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0) errors[`lines.${index}.quantity`] = `Line ${index + 1}: quantity must be greater than zero.`;
+    if (!String(line.uom ?? "").trim()) errors[`lines.${index}.uom`] = `Line ${index + 1}: UOM is required.`;
+  });
+  return errors;
+}
+
+function validateInvoice(fields: Record<string, unknown>, lines: LineItem[]): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!String(fields.customer ?? "").trim()) errors.customer = "Customer is required.";
+  if (!String(fields.delivery ?? fields.dispatchNote ?? "").trim()) errors.delivery = "Posted Dispatch is required before invoicing.";
+  if (!lines.length) errors.lines = "Add at least one invoice line.";
+  lines.forEach((line, index) => {
+    if (!String(line.item ?? "").trim()) errors[`lines.${index}.item`] = `Line ${index + 1}: item is required.`;
+    if (!Number.isFinite(Number(line.qty)) || Number(line.qty) <= 0) errors[`lines.${index}.quantity`] = `Line ${index + 1}: quantity must be greater than zero.`;
+    if (!String(line.uom ?? "").trim()) errors[`lines.${index}.uom`] = `Line ${index + 1}: UOM is required.`;
+    if (!Number.isFinite(Number(line.rate)) || Number(line.rate) < 0) errors[`lines.${index}.rate`] = `Line ${index + 1}: unit price must be zero or greater.`;
+  });
+  return errors;
+}
+
 function PurchaseOrderFields({
   fields,
   onChange,
@@ -416,6 +457,183 @@ function BackendRecordSelect({
   );
 }
 
+function SalesDispatchFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Dispatch</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Dispatch">
+          <div className="space-y-1.5">
+            <Label htmlFor="dispatch-so">Sales Order<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="dispatch-so" entity="sales_orders" value={fields.salesOrder} onChange={(v) => onChange("salesOrder", v)} disabled={disabled} placeholder="Select Sales Order..." />
+            {errors.salesOrder && <p className="text-xs font-medium text-destructive">{errors.salesOrder}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="dispatch-warehouse">Warehouse</Label>
+            <BackendRecordSelect id="dispatch-warehouse" entity="warehouses" value={fields.warehouse} onChange={(v) => onChange("warehouse", v)} disabled={disabled} placeholder="Select warehouse..." />
+            {errors.warehouse && <p className="text-xs font-medium text-destructive">{errors.warehouse}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="dispatch-notes">Notes</Label>
+            <Textarea id="dispatch-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SalesInvoiceFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Sales invoice</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Sales invoice">
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-customer">Customer<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="invoice-customer" entity="customers" value={fields.customer} onChange={(v) => onChange("customer", v)} disabled={disabled} placeholder="Select customer..." />
+            {errors.customer && <p className="text-xs font-medium text-destructive">{errors.customer}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-so">Sales Order</Label>
+            <BackendRecordSelect id="invoice-so" entity="sales_orders" value={fields.salesOrder} onChange={(v) => onChange("salesOrder", v)} disabled={disabled} placeholder="Select Sales Order..." />
+            {errors.salesOrder && <p className="text-xs font-medium text-destructive">{errors.salesOrder}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-dispatch">Dispatch<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="invoice-dispatch" entity="deliveries" value={fields.delivery ?? fields.dispatchNote} onChange={(v) => { onChange("delivery", v); onChange("dispatchNote", v); }} disabled={disabled} placeholder="Select posted dispatch..." />
+            {errors.delivery && <p className="text-xs font-medium text-destructive">{errors.delivery}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-currency">Currency</Label>
+            <Select value={String(fields.currency ?? "") || undefined} onValueChange={(v) => onChange("currency", v)} disabled={disabled}>
+              <SelectTrigger id="invoice-currency">
+                <SelectValue placeholder="Select currency..." />
+              </SelectTrigger>
+              <SelectContent>
+                {["NPR", "USD"].map((currency) => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {errors.currency && <p className="text-xs font-medium text-destructive">{errors.currency}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-date">Invoice Date</Label>
+            <Input id="invoice-date" type="date" value={String(fields.invoiceDate ?? "")} onChange={(e) => onChange("invoiceDate", e.target.value)} disabled={disabled} />
+            {errors.invoiceDate && <p className="text-xs font-medium text-destructive">{errors.invoiceDate}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="invoice-due">Due Date</Label>
+            <Input id="invoice-due" type="date" value={String(fields.dueDate ?? "")} onChange={(e) => onChange("dueDate", e.target.value)} disabled={disabled} />
+            {errors.dueDate && <p className="text-xs font-medium text-destructive">{errors.dueDate}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="invoice-notes">Notes</Label>
+            <Textarea id="invoice-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SalesBackendLineEditor({
+  entity,
+  lines,
+  onChange,
+  errors,
+  disabled,
+}: {
+  entity: string;
+  lines: LineItem[];
+  onChange: (lines: LineItem[]) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const isDispatch = entity === "deliveries";
+  const patchLine = (id: string, next: Partial<LineItem>) => onChange(lines.map((line) => line.id === id ? { ...line, ...next } : line));
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">{isDispatch ? "Dispatch lines" : "Invoice lines"}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {errors.lines && <p className="text-sm font-medium text-destructive">{errors.lines}</p>}
+        <div className="space-y-3">
+          {lines.map((line, index) => (
+            <div key={line.id} className="grid gap-3 rounded-lg border border-border/70 p-3 sm:grid-cols-6">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label>{isDispatch ? "Sales Order line" : "Item"}</Label>
+                {isDispatch ? (
+                  <Input value={line.salesOrderLineId || line.item} onChange={(e) => patchLine(line.id, { salesOrderLineId: e.target.value, item: e.target.value })} disabled={disabled} />
+                ) : (
+                  <BackendRecordSelect id={`invoice-line-item-${line.id}`} entity="products" value={line.item} onChange={(v) => patchLine(line.id, { item: v })} disabled={disabled} placeholder="Select item..." />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label>UOM</Label>
+                <Input value={line.uom ?? ""} onChange={(e) => patchLine(line.id, { uom: e.target.value })} disabled={disabled} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Quantity</Label>
+                <Input type="number" min={0} value={line.qty} onChange={(e) => patchLine(line.id, { qty: Number(e.target.value) || 0 })} disabled={disabled} />
+              </div>
+              {!isDispatch && (
+                <>
+                  <div className="space-y-1.5">
+                    <Label>Unit price</Label>
+                    <Input type="number" min={0} value={line.rate} onChange={(e) => patchLine(line.id, { rate: Number(e.target.value) || 0 })} disabled={disabled} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Tax %</Label>
+                    <Input type="number" min={0} value={line.taxPct ?? 0} onChange={(e) => patchLine(line.id, { taxPct: Number(e.target.value) || 0 })} disabled={disabled} />
+                  </div>
+                </>
+              )}
+              <div className="sm:col-span-6">
+                <Input value={line.description ?? ""} onChange={(e) => patchLine(line.id, { description: e.target.value })} disabled={disabled} placeholder={isDispatch ? "Line note" : "Sales Order line reference"} />
+              </div>
+              {(errors[`lines.${index}`] || errors[`lines.${index}.quantity`] || errors[`lines.${index}.uom`] || errors[`lines.${index}.item`] || errors[`lines.${index}.rate`]) && (
+                <p className="text-xs font-medium text-destructive sm:col-span-6">
+                  {errors[`lines.${index}`] || errors[`lines.${index}.quantity`] || errors[`lines.${index}.uom`] || errors[`lines.${index}.item`] || errors[`lines.${index}.rate`]}
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+        <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onChange([...lines, { id: newLineId(), item: "", salesOrderLineId: "", description: "", uom: "", qty: 0, rate: 0, taxPct: 0 }])}>
+          Add line
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ProformaInvoiceFields({
   fields,
   onChange,
@@ -629,6 +847,7 @@ function LetterOfCreditFields({
 export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const params = useParams({ strict: false }) as { entity?: string; id?: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const search = useRouterState({ select: (s) => s.location.searchStr });
   const parsed = parseRecordLocation(pathname);
   const slug = params.entity ?? parsed?.slug ?? "";
   const module = parsed?.module ?? "";
@@ -644,7 +863,14 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const isProformaInvoiceForm = entity === "proforma_invoices";
   const isLetterOfCreditForm = entity === "letters_of_credit";
   const isLandedCostForm = entity === "landed_cost_documents";
-  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm || isLandedCostForm;
+  const isTypedSalesForm = entity === "sales_orders" || entity === "deliveries" || entity === "invoices";
+  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm || isLandedCostForm || isTypedSalesForm;
+  const query = useMemo(() => new URLSearchParams(search), [search]);
+  const sourceSalesOrderId = query.get("sales_order") ?? "";
+  const sourceDispatchId = query.get("dispatch_note") ?? query.get("delivery") ?? "";
+  const sourceDispatch = useRecord("deliveries", sourceDispatchId);
+  const invoiceSalesOrderId = sourceSalesOrderId || String(sourceDispatch?.fields.salesOrder ?? "");
+  const sourceSalesOrder = useRecord("sales_orders", entity === "deliveries" ? sourceSalesOrderId : invoiceSalesOrderId);
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
@@ -673,9 +899,78 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       fields.purchaseQuantity = fields.purchaseQuantity || 0;
       fields.purchaseUnitCost = fields.purchaseUnitCost || 0;
     }
+    if (entity === "deliveries" && mode === "new" && sourceSalesOrder) {
+      fields.salesOrder = sourceSalesOrder.id;
+      fields.warehouse = sourceSalesOrder.fields.warehouse || "";
+      fields.notes = fields.notes || `Dispatch for ${sourceSalesOrder.code}`;
+    }
+    if (entity === "invoices" && mode === "new") {
+      fields.exchangeRate = fields.exchangeRate || 1;
+      fields.currency = fields.currency || sourceSalesOrder?.fields.currency || "NPR";
+      if (sourceSalesOrder) {
+        fields.salesOrder = sourceSalesOrder.id;
+        fields.customer = sourceSalesOrder.fields.customer || "";
+      }
+      if (sourceDispatch) {
+        fields.delivery = sourceDispatch.id;
+        fields.dispatchNote = sourceDispatch.id;
+        fields.salesOrder = sourceDispatch.fields.salesOrder || fields.salesOrder;
+        fields.notes = fields.notes || `Invoice for ${sourceDispatch.code}`;
+      }
+    }
     return fields;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm, isProformaInvoiceForm, isLetterOfCreditForm, isLandedCostForm]);
+  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm, isProformaInvoiceForm, isLetterOfCreditForm, isLandedCostForm, entity, sourceSalesOrder?.id, sourceDispatch?.id]);
+
+  const sourceSalesOrderLines = Array.isArray(sourceSalesOrder?.fields.salesOrderLines) ? sourceSalesOrder.fields.salesOrderLines as Array<Record<string, unknown>> : [];
+  const sourceDispatchLines = Array.isArray(sourceDispatch?.fields.dispatchLines) ? sourceDispatch.fields.dispatchLines as Array<Record<string, unknown>> : [];
+  const suggestedSalesLines = useMemo<LineItem[]>(() => {
+    if (entity === "deliveries" && mode === "new" && sourceSalesOrderLines.length) {
+      return sourceSalesOrderLines
+        .filter((line) => Number(line.ordered_quantity ?? 0) > Number(line.dispatched_quantity ?? 0))
+        .map((line) => ({
+          id: newLineId(),
+          item: String(line.id ?? ""),
+          salesOrderLineId: String(line.id ?? ""),
+          description: `SO line ${line.line_no ?? ""}`.trim(),
+          uom: String(line.uom ?? ""),
+          warehouse: String(line.warehouse ?? sourceSalesOrder?.fields.warehouse ?? ""),
+          qty: 0,
+          rate: 0,
+          taxPct: 0,
+        }));
+    }
+    if (entity === "invoices" && mode === "new" && sourceDispatchLines.length && sourceSalesOrderLines.length) {
+      return sourceDispatchLines.map((line) => {
+        const soLine = sourceSalesOrderLines.find((row) => String(row.id) === String(line.sales_order_line));
+        return {
+          id: newLineId(),
+          item: String(soLine?.item ?? ""),
+          salesOrderLineId: String(line.sales_order_line ?? ""),
+          description: `SO line ${soLine?.line_no ?? line.sales_order_line ?? ""}`.trim(),
+          uom: String(line.uom ?? soLine?.uom ?? ""),
+          qty: Number(line.quantity ?? 0),
+          rate: Number(soLine?.unit_price ?? 0),
+          taxPct: Number(soLine?.tax_pct ?? 0),
+        };
+      });
+    }
+    if (entity === "invoices" && mode === "new" && sourceSalesOrderLines.length) {
+      return sourceSalesOrderLines
+        .filter((line) => Number(line.ordered_quantity ?? 0) > Number(line.invoiced_quantity ?? 0))
+        .map((line) => ({
+          id: newLineId(),
+          item: String(line.item ?? ""),
+          salesOrderLineId: String(line.id ?? ""),
+          description: `SO line ${line.line_no ?? ""}`.trim(),
+          uom: String(line.uom ?? ""),
+          qty: 0,
+          rate: Number(line.unit_price ?? 0),
+          taxPct: Number(line.tax_pct ?? 0),
+        }));
+    }
+    return [];
+  }, [entity, mode, sourceSalesOrderLines, sourceDispatchLines, sourceSalesOrder?.fields.warehouse]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {
@@ -701,7 +996,9 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       existing?.lines.length
         ? existing.lines
         : def?.lines
-          ? isPurchaseOrderForm
+          ? suggestedSalesLines.length
+            ? suggestedSalesLines
+            : isPurchaseOrderForm
             ? [{ id: newLineId(), item: "", description: "", uom: "", warehouse: "", qty: 1, rate: 0, discountPct: 0, taxPct: 0 }]
             : makeLines(1)
           : [],
@@ -713,7 +1010,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       setCodeMode("auto");
       setManualCode("");
     }
-  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines, isProductForm, isPurchaseOrderForm]);
+  }, [existing?.id, mode, entity, initialFields, existing?.lines, def?.lines, isProductForm, isPurchaseOrderForm, suggestedSalesLines]);
 
   useEffect(() => {
     if (!isProductForm || mode !== "new" || codeMode !== "auto") return;
@@ -817,6 +1114,30 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       if (Object.keys(poErrors).length) {
         setFieldErrors(poErrors);
         toast.error("Fix the highlighted Purchase Order fields.");
+        return;
+      }
+    }
+    if (entity === "sales_orders" && mode === "new") {
+      const soErrors = validateSalesOrder(fields, lines);
+      if (Object.keys(soErrors).length) {
+        setFieldErrors(soErrors);
+        toast.error("Fix the highlighted Sales Order fields.");
+        return;
+      }
+    }
+    if (entity === "deliveries" && mode === "new") {
+      const dispatchErrors = validateDispatch(fields, lines);
+      if (Object.keys(dispatchErrors).length) {
+        setFieldErrors(dispatchErrors);
+        toast.error("Fix the highlighted Dispatch fields.");
+        return;
+      }
+    }
+    if (entity === "invoices" && mode === "new") {
+      const invoiceErrors = validateInvoice(fields, lines);
+      if (Object.keys(invoiceErrors).length) {
+        setFieldErrors(invoiceErrors);
+        toast.error("Fix the highlighted Invoice fields.");
         return;
       }
     }
@@ -1002,6 +1323,10 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
           <LetterOfCreditFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
         ) : isShipmentForm ? (
           <ShipmentFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : entity === "deliveries" && mode === "new" ? (
+          <SalesDispatchFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : entity === "invoices" && mode === "new" ? (
+          <SalesInvoiceFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
         ) : sections.map(([title, sectionFields]) => (
           <Card key={title} className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">
@@ -1026,6 +1351,23 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
         {isPurchaseOrderForm && mode === "new" ? (
           <PurchaseOrderLineEditor
+            lines={lines}
+            onChange={(next) => {
+              setDirty(true);
+              setLines(next);
+              setFieldErrors((s) => {
+                if (!Object.keys(s).some((key) => key === "lines" || key.startsWith("lines."))) return s;
+                const nextErrors = { ...s };
+                for (const key of Object.keys(nextErrors)) if (key === "lines" || key.startsWith("lines.")) delete nextErrors[key];
+                return nextErrors;
+              });
+            }}
+            errors={fieldErrors}
+            disabled={saving}
+          />
+        ) : (entity === "deliveries" || entity === "invoices") && mode === "new" ? (
+          <SalesBackendLineEditor
+            entity={entity}
             lines={lines}
             onChange={(next) => {
               setDirty(true);

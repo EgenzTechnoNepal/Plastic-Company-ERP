@@ -219,6 +219,18 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedShipment } = await import("./m2Typed");
     return createTypedShipment(record);
   }
+  if (entity === "sales_orders") {
+    const { createTypedSalesOrder } = await import("./m2Typed");
+    return createTypedSalesOrder(record);
+  }
+  if (entity === "deliveries") {
+    const { createTypedDispatch } = await import("./m2Typed");
+    return createTypedDispatch(record);
+  }
+  if (entity === "invoices") {
+    const { createTypedInvoice } = await import("./m2Typed");
+    return createTypedInvoice(record);
+  }
   if (entity === "landed_cost_documents") {
     const { createTypedLandedCostDocument } = await import("./m2Typed");
     return createTypedLandedCostDocument(record);

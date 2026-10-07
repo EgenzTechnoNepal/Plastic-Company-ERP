@@ -10,11 +10,18 @@ import { recordPath } from "@/features/registry/paths";
 import { npr } from "@/lib/export";
 import { searchRecord, str } from "@/lib/records";
 import { recordTotal, useRecords } from "@/services/entityService";
+import { setSalesOrderFulfillment } from "@/services/api/phase3";
+import { invalidateLive } from "@/services/queryClient";
+import { isLiveSession } from "@/store/auth";
 import type { ErpRecord } from "@/types/erp";
 
 type QueueStep = "pick" | "pack";
 
 function inQueue(row: ErpRecord, step: QueueStep) {
+  if (isLiveSession()) {
+    if (step === "pick") return row.status === "approved" && str(row, "pickStatus") !== "DONE";
+    return str(row, "pickStatus") === "DONE" && str(row, "packStatus") !== "DONE";
+  }
   if (step === "pick") {
     return str(row, "allocationStatus") === "Allocated" && str(row, "pickStatus") !== "Picked";
   }
@@ -29,7 +36,12 @@ export function FulfillmentQueue({ step, module = "sales" }: { step: QueueStep; 
 
   const run = async (row: ErpRecord) => {
     try {
-      await fulfillSalesOrder(row, step);
+      if (isLiveSession()) {
+        await setSalesOrderFulfillment(row.id, step === "pick" ? { pick_status: "DONE" } : { pack_status: "DONE" });
+        invalidateLive(["records", "sales_orders"], ["record", "sales_orders", row.id], ["records", "stock_reservations"]);
+      } else {
+        await fulfillSalesOrder(row, step);
+      }
       toast.success(`${row.code} ${step}ed`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Fulfilment failed");
@@ -54,12 +66,12 @@ export function FulfillmentQueue({ step, module = "sales" }: { step: QueueStep; 
         auditEntity="sales_orders"
         emptyMessage={
           step === "pick"
-            ? "No allocated orders waiting to pick. Allocate stock on an order first."
+            ? "No reserved orders waiting to pick."
             : "No picked orders waiting to pack."
         }
         search={(row, q) => searchRecord(row, q, ["code", "title", "fields.customerName"])}
         searchPlaceholder="Search orders…"
-        rowHref={(row) => recordPath("sales_orders", row.code)}
+        rowHref={(row) => recordPath("sales_orders", isLiveSession() ? row.id : row.code)}
         columns={[
           { key: "code", header: "Order", cell: (r) => <span className="font-mono text-xs">{r.code}</span>, value: (r) => r.code },
           { key: "customer", header: "Customer", cell: (r) => str(r, "customerName") || r.title, value: (r) => str(r, "customerName") || r.title },
