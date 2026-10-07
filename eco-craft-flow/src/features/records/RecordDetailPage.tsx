@@ -47,7 +47,7 @@ import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
 import { isTypedEntity } from "@/services/api/typedEntities";
-import { logView, useApprovals, useAudit, useRecord, useRecordsStatus } from "@/services/entityService";
+import { logView, useApprovals, useAudit, useRecord, useRecords, useRecordsStatus } from "@/services/entityService";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -58,6 +58,35 @@ function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
     groups.set(key, arr);
   }
   return Array.from(groups.entries());
+}
+
+function GrnQcLinks({ grnId }: { grnId: string }) {
+  const inspections = useRecords("qc_inspections", { grn: grnId });
+  const status = useRecordsStatus("qc_inspections", undefined, { grn: grnId });
+  if (status.loading) {
+    return (
+      <Card className="rounded-2xl border-border/60">
+        <CardContent className="py-3 text-sm text-muted-foreground">Loading related QC inspections...</CardContent>
+      </Card>
+    );
+  }
+  if (status.error || inspections.length === 0) return null;
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Related QC</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {inspections.map((inspection) => (
+          <Button key={inspection.id} asChild variant="outline" size="sm" className="mr-2">
+            <Link to={recordPath("qc_inspections", inspection.id) as never}>
+              {inspection.code} - {String(inspection.fields.lotStatus ?? inspection.status)}
+            </Link>
+          </Button>
+        ))}
+      </CardContent>
+    </Card>
+  );
 }
 
 export function RecordDetailPage() {
@@ -146,7 +175,7 @@ export function RecordDetailPage() {
   };
 
   const sections = groupFields(def);
-  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit"].includes(entity) ? record.id : record.code;
+  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit", "qc_inspections"].includes(entity) ? record.id : record.code;
 
   return (
     <>
@@ -284,6 +313,7 @@ export function RecordDetailPage() {
             {localPanels && entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}
             {(entity === "gate_entries" || entity === "grns") && <LcGateGuardBanner record={record} />}
+            {entity === "grns" && <GrnQcLinks grnId={record.id} />}
             {entity === "letters_of_credit" && <LcWorkflowPanel record={record} />}
             {entity === "boms" && <BomExplosion bom={record} />}
             {entity === "production_plans" && <PlanPanel plan={record} />}
@@ -300,9 +330,6 @@ export function RecordDetailPage() {
               <>
                 <QcWorkflowPanel
                   record={record}
-                  onUpdated={() => {
-                    toast.success("QC updated — refresh list if status looks stale");
-                  }}
                 />
                 {localPanels && <InspectionChecks qc={record} />}
               </>

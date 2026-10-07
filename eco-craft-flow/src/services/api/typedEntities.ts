@@ -30,6 +30,7 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "shipments",
   "gate_entries",
   "grns",
+  "qc_inspections",
 ]);
 
 export function isTypedEntity(entity: string): boolean {

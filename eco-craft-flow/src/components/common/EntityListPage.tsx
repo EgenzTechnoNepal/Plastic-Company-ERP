@@ -32,6 +32,7 @@ interface EntityListPageProps {
 }
 
 const PROCUREMENT_SEARCH_ENTITIES = new Set(["purchase_orders", "shipments", "gate_entries", "grns"]);
+const SERVER_SEARCH_ENTITIES = new Set([...PROCUREMENT_SEARCH_ENTITIES, "qc_inspections"]);
 
 const PROCUREMENT_FILTERS: Record<
   string,
@@ -68,6 +69,9 @@ const PROCUREMENT_FILTERS: Record<
     { key: "supplier", placeholder: "All suppliers", options: "supplier" },
     { key: "warehouse", placeholder: "All warehouses", options: "warehouse" },
   ],
+  qc_inspections: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
 };
 
 const PROCUREMENT_STATUSES: Record<string, string[]> = {
@@ -89,6 +93,7 @@ const PROCUREMENT_STATUSES: Record<string, string[]> = {
   ],
   gate_entries: ["DRAFT", "SUBMITTED", "LINKED_TO_GRN", "CANCELLED"],
   grns: ["DRAFT", "POSTED", "CANCELLED"],
+  qc_inspections: ["DRAFT", "PASSED", "FAILED"],
 };
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
@@ -223,7 +228,7 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
   const warehouses = useRecords("warehouses");
   const apiQuery = useMemo<TypedListQuery>(() => {
     const next: TypedListQuery = {};
-    if (PROCUREMENT_SEARCH_ENTITIES.has(entity) && debouncedQuery) next.search = debouncedQuery;
+    if (SERVER_SEARCH_ENTITIES.has(entity) && debouncedQuery) next.search = debouncedQuery;
     for (const [key, value] of Object.entries(filterState)) {
       if (!value || value === "all") continue;
       if (key === "active") next.is_active = value;
@@ -291,7 +296,7 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
               : `No ${def.label.toLowerCase()} match your filters.`
         }
         searchPlaceholder={`Search ${def.label.toLowerCase()}…`}
-        search={PROCUREMENT_SEARCH_ENTITIES.has(entity) ? () => true : undefined}
+        search={SERVER_SEARCH_ENTITIES.has(entity) ? () => true : undefined}
         searchValue={query}
         onSearchChange={setQuery}
         filters={filters}

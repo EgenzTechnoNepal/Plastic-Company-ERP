@@ -19,6 +19,8 @@ export type TypedListQuery = {
   supplier?: string;
   purchase_order?: string;
   warehouse?: string;
+  lot?: string;
+  grn?: string;
   status?: string;
   is_active?: string | boolean;
   page?: number;
@@ -233,6 +235,41 @@ type GoodsReceiptRow = Named & {
     purchase_order_line?: string | null;
     line_notes?: string;
   }>;
+};
+
+type InventoryLotRow = Named & {
+  lot_number?: string;
+  item?: string;
+  supplier?: string | null;
+  supplier_lot_number?: string;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  received_date?: string | null;
+  source_grn_reference?: string;
+  purchase_reference?: string;
+  certificate_coa_reference?: string;
+  warehouse?: string | null;
+  bin?: string | null;
+  qc_status?: string;
+  uom?: string | null;
+  initial_quantity?: string;
+  remaining_quantity?: string;
+};
+
+type QCInspectionRow = Named & {
+  company?: string;
+  inspection_number?: string;
+  grn?: string | null;
+  lot?: string;
+  item?: string;
+  status?: string;
+  fail_disposition?: string;
+  inspected_at?: string | null;
+  remarks?: string;
+  coa_reference?: string;
+  coa_attachment_url?: string;
+  metrics?: Record<string, unknown>;
+  ncr_reference?: string;
 };
 
 export type TypedOption = { id: string; code: string; label: string };
@@ -637,7 +674,9 @@ async function resolveTypedDetailId(entity: string, ref: string): Promise<string
               ? await listTypedGateEntries()
               : entity === "grns"
                 ? await listTypedGrns()
-                : [];
+                : entity === "qc_inspections"
+                  ? await listTypedInspections()
+                  : [];
   const hit = rows.find((r) => r.id === raw || r.code === raw || String(r.fields?.typedId) === raw);
   if (!hit) throw new Error(`Record "${raw}" not found.`);
   return String(hit.fields?.typedId ?? hit.id);
@@ -1324,44 +1363,72 @@ export async function listTypedInvoices(): Promise<ErpRecord[]> {
   );
 }
 
-export async function listTypedInspections(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      lot?: string;
-      item?: string;
-      grn?: string;
-      remarks?: string;
-      fail_disposition?: string;
-      coa_reference?: string;
-      coa_attachment_url?: string;
-      metrics?: Record<string, unknown>;
-      ncr_reference?: string;
-    }
-  >(PHASE2_TYPED_API.lotInspections);
-  return rows.map((r) =>
-    baseRecord(
-      "qc_inspections",
-      r.id,
-      r.inspection_number ?? r.id,
-      r.inspection_number || "QC Inspection",
-      r.status ?? "draft",
-      {
-        lot: r.lot,
-        product: r.item,
-        grn: r.grn,
-        remarks: r.remarks,
-        disposition: r.fail_disposition,
-        coaReference: r.coa_reference,
-        coaAttachmentUrl: r.coa_attachment_url,
-        metrics: r.metrics,
-        ncrReference: r.ncr_reference,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+async function getTypedInventoryLot(id: string): Promise<InventoryLotRow | undefined> {
+  const raw = String(id ?? "").trim();
+  if (!raw) return undefined;
+  return apiFetch<InventoryLotRow>(`${M2_TYPED_PATHS.lots}${raw}/`, { silent: true }).catch(() => undefined);
+}
+
+function mapTypedInspection(r: QCInspectionRow, lot?: InventoryLotRow): ErpRecord {
+  const record = baseRecord(
+    "qc_inspections",
+    r.id,
+    r.inspection_number ?? r.id,
+    [r.inspection_number, lot?.lot_number ? `Lot ${lot.lot_number}` : ""].filter(Boolean).join(" - ") || "QC Inspection",
+    r.status ?? "DRAFT",
+    {
+      inspectionNumber: r.inspection_number,
+      grn: r.grn,
+      lot: r.lot,
+      lotNumber: lot?.lot_number,
+      lotStatus: lot?.status,
+      qcStatus: lot?.qc_status,
+      supplierLotNumber: lot?.supplier_lot_number,
+      product: r.item,
+      item: r.item,
+      warehouse: lot?.warehouse,
+      bin: lot?.bin,
+      uom: lot?.uom,
+      initialQty: Number(lot?.initial_quantity ?? 0),
+      remainingQty: Number(lot?.remaining_quantity ?? 0),
+      sourceGrnReference: lot?.source_grn_reference,
+      purchaseReference: lot?.purchase_reference,
+      inspectedAt: r.inspected_at,
+      remarks: r.remarks,
+      disposition: r.fail_disposition,
+      coaReference: r.coa_reference,
+      coaAttachmentUrl: r.coa_attachment_url,
+      certificateCoaReference: lot?.certificate_coa_reference,
+      metrics: r.metrics,
+      ncrReference: r.ncr_reference,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
   );
+  return {
+    ...record,
+    status: (r.status ?? record.status) as DocStatus,
+    links: r.grn ? [{ entity: "grns", id: r.grn, label: lot?.source_grn_reference ?? "GRN" }] : [],
+  };
+}
+
+export async function listTypedInspections(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<QCInspectionRow>(
+    PHASE2_TYPED_API.lotInspections,
+    cleanListQuery(query, ["company", "lot", "status", "grn", "search", "page", "page_size"]),
+  );
+  const lots = await Promise.all(rows.map((r) => getTypedInventoryLot(String(r.lot ?? ""))));
+  return rows.map((r, index) => mapTypedInspection(r, lots[index]));
+}
+
+export async function getTypedInspection(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("qc_inspections", id);
+  const row = await apiFetch<QCInspectionRow>(`${PHASE2_TYPED_API.lotInspections}${pk}/`, { silent: true });
+  const lot = await getTypedInventoryLot(String(row.lot ?? ""));
+  return mapTypedInspection(row, lot);
 }
 
 export async function listTypedStockMovements(): Promise<ErpRecord[]> {
@@ -1429,7 +1496,7 @@ export async function listM2TypedEntity(entity: string, query?: TypedListQuery):
     case "invoices":
       return listTypedInvoices();
     case "qc_inspections":
-      return listTypedInspections();
+      return listTypedInspections(query);
     case "stock_movements":
       return listTypedStockMovements();
     default:
@@ -1451,6 +1518,8 @@ export async function getM2TypedEntity(entity: string, id: string): Promise<ErpR
       return getTypedGateEntry(id);
     case "grns":
       return getTypedGrn(id);
+    case "qc_inspections":
+      return getTypedInspection(id);
     default:
       return null;
   }
