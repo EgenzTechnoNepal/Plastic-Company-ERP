@@ -1,5 +1,6 @@
 import { apiFetch, apiFetchMeta, ApiError } from "./client";
 import { isTypedEntity, typedUnavailable } from "./typedEntities";
+import type { TypedListQuery } from "./m2Typed";
 import type { DocStatus, ErpRecord, LineItem, StatusEvent } from "@/types/erp";
 
 /** Django path (under /api/v1) for each frontend entity key. */
@@ -133,7 +134,7 @@ function pathFor(entity: string): string {
   return p;
 }
 
-export async function listRecords(entity: string): Promise<ErpRecord[]> {
+export async function listRecords(entity: string, query?: TypedListQuery): Promise<ErpRecord[]> {
   if (entity === "customers") {
     const { listTypedCustomers } = await import("./crm");
     return listTypedCustomers();
@@ -147,10 +148,10 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
     return listTypedActivities();
   }
   const { listM2TypedEntity } = await import("./m2Typed");
-  const m2 = await listM2TypedEntity(entity);
+  const m2 = await listM2TypedEntity(entity, query);
   if (m2) return m2;
   const { data } = await apiFetchMeta<RecordDto[]>(pathFor(entity), {
-    query: { page_size: 200 },
+    query: query ?? { page_size: 200 },
     silent: true,
   });
   return (Array.isArray(data) ? data : []).map(toErpRecord);

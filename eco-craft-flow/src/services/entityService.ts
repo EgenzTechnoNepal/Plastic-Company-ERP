@@ -22,6 +22,7 @@ import {
   updateRecord,
 } from "@/services/api/records";
 import { runTypedWorkflowAction } from "@/services/api/m2Typed";
+import type { TypedListQuery } from "@/services/api/m2Typed";
 import { M2_DEMO_TYPED_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { decideTypedApproval, listTypedApprovals, type ApprovalDto } from "@/services/api/crm";
 import { fetchAuditLogs } from "@/services/api/audit";
@@ -470,17 +471,17 @@ export type EntityService = ReturnType<typeof createEntityService>;
 
 /* ---------------- React hooks ---------------- */
 
-function useRecordsQuery(entity: string, enabledOverride = true) {
+function useRecordsQuery(entity: string, enabledOverride = true, query?: TypedListQuery) {
   const live = useAuthStore((s) => s.source === "api");
   const enabled = live && enabledOverride && Boolean(RECORD_PATHS[entity]);
-  const query = useQuery({
-    queryKey: ["records", entity],
-    queryFn: () => listRecords(entity),
+  const result = useQuery({
+    queryKey: ["records", entity, query ?? {}],
+    queryFn: () => listRecords(entity, query),
     enabled,
     staleTime: 15_000,
     retry: 1,
   });
-  return { live, enabled, ...query };
+  return { live, enabled, ...result };
 }
 
 function useRecordQuery(entity: string, code: string) {
@@ -500,9 +501,9 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : "Request failed";
 }
 
-export function useRecords(entity: string): ErpRecord[] {
+export function useRecords(entity: string, query?: TypedListQuery): ErpRecord[] {
   const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
-  const { live, data } = useRecordsQuery(entity);
+  const { live, data } = useRecordsQuery(entity, true, query);
   if (live && M2_DEMO_TYPED_ENTITIES.has(entity)) {
     // Never show localStorage mock stock/commercials while authenticated live.
     return data ?? EMPTY_RECORDS;
@@ -511,9 +512,9 @@ export function useRecords(entity: string): ErpRecord[] {
 }
 
 /** Loading / error state for live server-backed lists (null error when offline or healthy). */
-export function useRecordsStatus(entity: string, code?: string): { loading: boolean; error: string | null; retry: () => void } {
+export function useRecordsStatus(entity: string, code?: string, query?: TypedListQuery): { loading: boolean; error: string | null; retry: () => void } {
   const detail = useRecordQuery(entity, code ?? "");
-  const list = useRecordsQuery(entity, !detail.enabled);
+  const list = useRecordsQuery(entity, !detail.enabled, query);
   if (detail.enabled) {
     return {
       loading: detail.isLoading,

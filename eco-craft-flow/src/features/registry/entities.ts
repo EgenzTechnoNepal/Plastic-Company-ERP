@@ -441,15 +441,15 @@ export const ENTITIES: EntityDef[] = [
   {
     key: "grns", label: "Goods Receipts (GRN)", singular: "GRN", module: "purchase", moduleLabel: "Purchase", prefix: "GRN",
     statuses: S.flow, lines: "items", printable: true,
-    columns: [{ key: "code", label: "GRN", primary: true }, { key: "fields.supplierName", label: "Supplier" }, { key: "fields.purchaseOrder", label: "PO" }, { key: "date", label: "Date", type: "date" }, { key: "fields.inspection", label: "Inspection" }, { key: "status", label: "Status", type: "status" }],
+    columns: [{ key: "code", label: "GRN", primary: true }, { key: "fields.supplier", label: "Supplier" }, { key: "fields.warehouse", label: "Warehouse" }, { key: "fields.purchaseReference", label: "Reference" }, { key: "fields.acceptedQty", label: "Accepted", type: "number", align: "right" }, { key: "status", label: "Status", type: "status" }],
     fields: [
       f("purchaseOrder", "Purchase Order", "ref", { refEntity: "purchase_orders", required: true }),
       f("supplierName", "Supplier"), f("gateEntry", "Gate Entry", "ref", { refEntity: "gate_entries" }),
       f("warehouse", "Warehouse", "ref", { refEntity: "warehouses", required: true }),
-      f("batch", "Batch No."), f("inspection", "Inspection", "select", { options: ["Pending", "Passed", "Failed"] }),
-      f("acceptedQty", "Accepted Qty", "number"), f("rejectedQty", "Rejected Qty", "number"),
-      f("putawayStatus", "Put-away", "select", { options: ["Pending", "Put away"] }),
-      f("putawayBin", "Put-away Bin", "ref", { refEntity: "bins" }),
+      f("purchaseReference", "Purchase Reference"),
+      f("acceptedQty", "Accepted Qty", "number"),
+      f("receivedAt", "Received At", "date"),
+      f("postedAt", "Posted At", "date"),
     ],
   },
   {

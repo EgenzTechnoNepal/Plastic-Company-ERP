@@ -13,6 +13,18 @@ import { typedUnavailable } from "./typedEntities";
 
 export { M2_DEMO_TYPED_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "./typedEntities";
 
+export type TypedListQuery = {
+  search?: string;
+  company?: string;
+  supplier?: string;
+  purchase_order?: string;
+  warehouse?: string;
+  status?: string;
+  is_active?: string | boolean;
+  page?: number;
+  page_size?: number;
+};
+
 export const M2_TYPED_PATHS = {
   vendors: `${API_V1}/purchase/vendors/`,
   items: `${API_V1}/inventory/items/`,
@@ -40,8 +52,21 @@ function statusMap(raw: string | undefined): DocStatus {
   return (s as DocStatus) || "draft";
 }
 
-async function listRows<T>(path: string): Promise<T[]> {
-  const { data } = await apiFetchMeta<T[]>(path, { query: { page_size: 200 }, silent: true });
+function cleanListQuery(
+  query: TypedListQuery | undefined,
+  allowed: Array<keyof TypedListQuery>,
+): Record<string, string | number | boolean | undefined> | undefined {
+  if (!query) return undefined;
+  const out: Record<string, string | number | boolean | undefined> = {};
+  for (const key of allowed) {
+    const value = query[key];
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
+}
+
+async function listRows<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T[]> {
+  const { data } = await apiFetchMeta<T[]>(path, { query: query ?? { page_size: 200 }, silent: true });
   return Array.isArray(data) ? data : [];
 }
 
@@ -587,8 +612,11 @@ function mapTypedPurchaseOrder(r: PurchaseOrderRow): ErpRecord {
   return { ...record, status: PO_STATUS[String(r.status ?? "").toUpperCase()] ?? record.status };
 }
 
-export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
-  const rows = await listRows<PurchaseOrderRow>(PHASE3_TYPED_API.purchaseOrders);
+export async function listTypedPurchaseOrders(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<PurchaseOrderRow>(
+    PHASE3_TYPED_API.purchaseOrders,
+    cleanListQuery(query, ["company", "supplier", "status", "search", "page", "page_size"]),
+  );
   return rows.map(mapTypedPurchaseOrder);
 }
 
@@ -750,8 +778,11 @@ function mapTypedProformaInvoice(r: ProformaInvoiceRow): ErpRecord {
   );
 }
 
-export async function listTypedProformaInvoices(): Promise<ErpRecord[]> {
-  const rows = await listRows<ProformaInvoiceRow>(PHASE3_TYPED_API.proformaInvoices);
+export async function listTypedProformaInvoices(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<ProformaInvoiceRow>(
+    PHASE3_TYPED_API.proformaInvoices,
+    cleanListQuery(query, ["company", "supplier", "purchase_order", "status", "page", "page_size"]),
+  );
   return rows.map(mapTypedProformaInvoice);
 }
 
@@ -806,8 +837,11 @@ function mapTypedLetterOfCredit(r: LetterOfCreditRow): ErpRecord {
   );
 }
 
-export async function listTypedLettersOfCredit(): Promise<ErpRecord[]> {
-  const rows = await listRows<LetterOfCreditRow>(PHASE3_TYPED_API.lettersOfCredit);
+export async function listTypedLettersOfCredit(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<LetterOfCreditRow>(
+    PHASE3_TYPED_API.lettersOfCredit,
+    cleanListQuery(query, ["company", "supplier", "purchase_order", "status", "page", "page_size"]),
+  );
   return rows.map(mapTypedLetterOfCredit);
 }
 
@@ -995,8 +1029,11 @@ function mapTypedShipment(r: ImportShipmentRow): ErpRecord {
   };
 }
 
-export async function listTypedShipments(): Promise<ErpRecord[]> {
-  const rows = await listRows<ImportShipmentRow>(PHASE2_TYPED_API.importShipments);
+export async function listTypedShipments(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<ImportShipmentRow>(
+    PHASE2_TYPED_API.importShipments,
+    cleanListQuery(query, ["company", "supplier", "is_active", "search", "page", "page_size"]),
+  );
   return rows.map(mapTypedShipment);
 }
 
@@ -1080,8 +1117,11 @@ function mapTypedGateEntry(r: GateEntryRow): ErpRecord {
   );
 }
 
-export async function listTypedGateEntries(): Promise<ErpRecord[]> {
-  const rows = await listRows<GateEntryRow>(PHASE2_TYPED_API.inboundGates);
+export async function listTypedGateEntries(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<GateEntryRow>(
+    PHASE2_TYPED_API.inboundGates,
+    cleanListQuery(query, ["company", "supplier", "status", "search", "page", "page_size"]),
+  );
   return rows.map(mapTypedGateEntry);
 }
 
@@ -1143,8 +1183,11 @@ function mapTypedGrn(r: GoodsReceiptRow): ErpRecord {
   );
 }
 
-export async function listTypedGrns(): Promise<ErpRecord[]> {
-  const rows = await listRows<GoodsReceiptRow>(PHASE2_TYPED_API.goodsReceipts);
+export async function listTypedGrns(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<GoodsReceiptRow>(
+    PHASE2_TYPED_API.goodsReceipts,
+    cleanListQuery(query, ["company", "supplier", "status", "warehouse", "search", "page", "page_size"]),
+  );
   return rows.map(mapTypedGrn);
 }
 
@@ -1355,7 +1398,7 @@ export async function listTypedStockMovements(): Promise<ErpRecord[]> {
   );
 }
 
-export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | null> {
+export async function listM2TypedEntity(entity: string, query?: TypedListQuery): Promise<ErpRecord[] | null> {
   switch (entity) {
     case "suppliers":
       return listTypedSuppliers();
@@ -1366,17 +1409,17 @@ export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | n
     case "bins":
       return listTypedBins();
     case "purchase_orders":
-      return listTypedPurchaseOrders();
+      return listTypedPurchaseOrders(query);
     case "proforma_invoices":
-      return listTypedProformaInvoices();
+      return listTypedProformaInvoices(query);
     case "letters_of_credit":
-      return listTypedLettersOfCredit();
+      return listTypedLettersOfCredit(query);
     case "shipments":
-      return listTypedShipments();
+      return listTypedShipments(query);
     case "gate_entries":
-      return listTypedGateEntries();
+      return listTypedGateEntries(query);
     case "grns":
-      return listTypedGrns();
+      return listTypedGrns(query);
     case "purchase_bills":
       return listTypedBills();
     case "sales_orders":
