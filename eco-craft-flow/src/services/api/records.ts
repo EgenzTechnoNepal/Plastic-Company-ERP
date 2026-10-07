@@ -156,6 +156,9 @@ export async function listRecords(entity: string): Promise<ErpRecord[]> {
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
+  const { getM2TypedEntity } = await import("./m2Typed");
+  const m2 = await getM2TypedEntity(entity, id);
+  if (m2) return m2;
   if (isTypedEntity(entity)) {
     const rows = await listRecords(entity);
     const found = rows.find((r) => r.id === id || r.code === id);

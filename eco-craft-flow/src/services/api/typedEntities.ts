@@ -22,6 +22,14 @@ export const M2_DEMO_TYPED_ENTITIES = new Set([
   "activities",
 ]);
 
+export const M2_TYPED_DETAIL_ENTITIES = new Set([
+  "purchase_orders",
+  "proforma_invoices",
+  "letters_of_credit",
+  "gate_entries",
+  "grns",
+]);
+
 export function isTypedEntity(entity: string): boolean {
   return M2_DEMO_TYPED_ENTITIES.has(entity);
 }

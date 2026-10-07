@@ -69,7 +69,7 @@ export function RecordDetailPage() {
   const entity = entityKeyFor(module, slug) ?? "";
   const def = getEntity(entity);
   const record = useRecord(entity, code);
-  const loadStatus = useRecordsStatus(entity);
+  const loadStatus = useRecordsStatus(entity, code);
   const audit = useAudit().filter((e) => e.recordId === record?.id || e.recordCode === code);
   const approvals = useApprovals().filter((a) => a.recordId === record?.id || a.recordCode === code);
   const [confirm, setConfirm] = useState<Extract<WorkflowAction, "reject" | "cancel" | "reverse" | "return"> | null>(null);

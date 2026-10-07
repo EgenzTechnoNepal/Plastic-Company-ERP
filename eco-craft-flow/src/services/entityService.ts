@@ -21,7 +21,8 @@ import {
   RECORD_PATHS,
   updateRecord,
 } from "@/services/api/records";
-import { M2_DEMO_TYPED_ENTITIES, runTypedWorkflowAction } from "@/services/api/m2Typed";
+import { runTypedWorkflowAction } from "@/services/api/m2Typed";
+import { M2_DEMO_TYPED_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { decideTypedApproval, listTypedApprovals, type ApprovalDto } from "@/services/api/crm";
 import { fetchAuditLogs } from "@/services/api/audit";
 import { invalidateLive } from "@/services/queryClient";
@@ -469,12 +470,25 @@ export type EntityService = ReturnType<typeof createEntityService>;
 
 /* ---------------- React hooks ---------------- */
 
-function useRecordsQuery(entity: string) {
+function useRecordsQuery(entity: string, enabledOverride = true) {
   const live = useAuthStore((s) => s.source === "api");
-  const enabled = live && Boolean(RECORD_PATHS[entity]);
+  const enabled = live && enabledOverride && Boolean(RECORD_PATHS[entity]);
   const query = useQuery({
     queryKey: ["records", entity],
     queryFn: () => listRecords(entity),
+    enabled,
+    staleTime: 15_000,
+    retry: 1,
+  });
+  return { live, enabled, ...query };
+}
+
+function useRecordQuery(entity: string, code: string) {
+  const live = useAuthStore((s) => s.source === "api");
+  const enabled = live && M2_TYPED_DETAIL_ENTITIES.has(entity) && Boolean(RECORD_PATHS[entity]) && Boolean(code);
+  const query = useQuery({
+    queryKey: ["record", entity, code],
+    queryFn: () => getRecord(entity, code),
     enabled,
     staleTime: 15_000,
     retry: 1,
@@ -497,16 +511,28 @@ export function useRecords(entity: string): ErpRecord[] {
 }
 
 /** Loading / error state for live server-backed lists (null error when offline or healthy). */
-export function useRecordsStatus(entity: string): { loading: boolean; error: string | null; retry: () => void } {
-  const { enabled, isLoading, error, refetch } = useRecordsQuery(entity);
+export function useRecordsStatus(entity: string, code?: string): { loading: boolean; error: string | null; retry: () => void } {
+  const detail = useRecordQuery(entity, code ?? "");
+  const list = useRecordsQuery(entity, !detail.enabled);
+  if (detail.enabled) {
+    return {
+      loading: detail.isLoading,
+      error: detail.error ? errorText(detail.error) : null,
+      retry: () => void detail.refetch(),
+    };
+  }
   return {
-    loading: enabled && isLoading,
-    error: enabled && error ? errorText(error) : null,
-    retry: () => void refetch(),
+    loading: list.enabled && list.isLoading,
+    error: list.enabled && list.error ? errorText(list.error) : null,
+    retry: () => void list.refetch(),
   };
 }
 export function useRecord(entity: string, code: string): ErpRecord | undefined {
-  const rows = useRecords(entity);
+  const detail = useRecordQuery(entity, code);
+  const { live, data } = useRecordsQuery(entity, !detail.enabled);
+  const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
+  if (detail.enabled) return detail.data;
+  const rows = live && data ? data : mock;
   return rows.find((r) => r.code === code || r.id === code);
 }
 export function useAudit(): AuditEvent[] {

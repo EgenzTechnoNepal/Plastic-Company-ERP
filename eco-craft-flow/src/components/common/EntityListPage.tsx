@@ -7,6 +7,7 @@ import { npr } from "@/lib/export";
 import { getField, num, searchRecord, statusLabel, statusTone, str } from "@/lib/records";
 import { recordPath } from "@/features/registry/paths";
 import { recordTotal, useRecords, useRecordsStatus } from "@/services/entityService";
+import { M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { Button } from "@/components/ui/button";
 import type { ErpRecord } from "@/types/erp";
 
@@ -98,7 +99,7 @@ export function EntityListPage({ entity, kpis, filter, extraFilters = [], export
         }
         searchPlaceholder={`Search ${def.label.toLowerCase()}…`}
         search={(r, q) => searchRecord(r, q, searchKeys)}
-        rowHref={(r) => recordPath(entity, r.code)}
+        rowHref={(r) => recordPath(entity, M2_TYPED_DETAIL_ENTITIES.has(entity) ? r.id : r.code)}
         auditModule={def.module}
         auditEntity={entity}
         filters={filters}
