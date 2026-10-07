@@ -50,6 +50,38 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "invoices",
 ]);
 
+/** Typed entities with create endpoints wired to the frontend API adapters. */
+export const LIVE_TYPED_CREATE_ENTITIES = new Set([
+  "suppliers",
+  "products",
+  "warehouses",
+  "purchase_orders",
+  "proforma_invoices",
+  "letters_of_credit",
+  "shipments",
+  "landed_cost_documents",
+  "sales_orders",
+  "deliveries",
+  "invoices",
+  "customers",
+  "contacts",
+  "activities",
+]);
+
+/** Typed entities with update endpoints wired to the frontend API adapters. */
+export const LIVE_TYPED_EDIT_ENTITIES = new Set([
+  "suppliers",
+  "products",
+  "warehouses",
+  "proforma_invoices",
+  "letters_of_credit",
+  "shipments",
+  "landed_cost_documents",
+  "customers",
+  "contacts",
+  "activities",
+]);
+
 export function isTypedEntity(entity: string): boolean {
   return M2_DEMO_TYPED_ENTITIES.has(entity);
 }

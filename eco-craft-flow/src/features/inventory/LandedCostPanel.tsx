@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toastApiError } from "@/services/api/client";
+import { isLiveSession } from "@/store/auth";
 import {
   createTypedLandedCostComponent,
   deleteTypedLandedCostComponent,
@@ -167,6 +168,7 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
   const [preview, setPreview] = useState<LandedCostPreviewDto | null>(null);
   const [busy, setBusy] = useState<"preview" | "post" | "component" | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [postOpen, setPostOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, ComponentForm>>({});
   const [newRow, setNewRow] = useState<ComponentForm>(() => ({
     category: "INTERNATIONAL_FREIGHT",
@@ -187,7 +189,11 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
     queryFn: () => listTypedLandedCostComponents(id),
     enabled: Boolean(id),
   });
-  const components = (componentQuery.data ?? fallbackComponents) as CostComponent[];
+  const liveSession = isLiveSession();
+  const displayedComponents =
+    liveSession && componentQuery.error
+      ? []
+      : componentQuery.data ?? (liveSession ? [] : fallbackComponents);
   const canEditComponents = status !== "POSTED" && status !== "CANCELLED";
 
   const refresh = () => {
@@ -226,8 +232,10 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
       setPreview(result);
       refresh();
       toast.success("Landed cost posted");
+      return true;
     } catch (err) {
       toastApiError(err);
+      return false;
     } finally {
       setBusy(null);
     }
@@ -263,15 +271,17 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
   };
 
   const removeComponent = async () => {
-    if (!deleteId) return;
+    if (!deleteId) return false;
     setBusy("component");
     try {
       await deleteTypedLandedCostComponent(deleteId);
       setDeleteId(null);
       refreshAfterComponentChange();
       toast.success("Landed cost component removed");
+      return true;
     } catch (err) {
       toastApiError(err);
+      return false;
     } finally {
       setBusy(null);
     }
@@ -292,8 +302,8 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
         base_currency_amount: component.base_currency_amount,
         allocation_basis: component.allocation_basis,
       }))
-    : components;
-  const previewIsStale = preview === null && components.length > 0 && status !== "POSTED";
+    : displayedComponents;
+  const previewIsStale = preview === null && displayedComponents.length > 0 && status !== "POSTED";
 
   const renderEditorRow = (key: string, form: ComponentForm, onChange: (next: ComponentForm) => void, action: React.ReactNode) => (
     <div key={key} className="grid gap-2 rounded-lg border border-border/60 p-3 lg:grid-cols-[1.2fr_1fr_0.8fr_0.8fr_0.7fr_auto]">
@@ -375,13 +385,21 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
           </p>
         </CardHeader>
         <CardContent className="space-y-3">
+          {componentQuery.isLoading && (
+            <p role="status" className="text-sm text-muted-foreground">Loading backend cost components…</p>
+          )}
+          {componentQuery.error && (
+            <div role="alert" className="flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
+              <span>Could not load landed-cost components: {componentQuery.error instanceof Error ? componentQuery.error.message : "Request failed"}</span>
+              <Button size="sm" variant="outline" onClick={() => void componentQuery.refetch()}>Retry</Button>
+            </div>
+          )}
           {!canEditComponents && (
             <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
               Component editing is disabled for {status} landed cost documents.
             </p>
           )}
-          {componentQuery.isLoading && <p className="text-sm text-muted-foreground">Loading cost components...</p>}
-          {components.map((component) => {
+          {displayedComponents.map((component) => {
             if (!component.id) return null;
             const form = drafts[component.id] ?? formFromComponent(component, currencyId);
             return renderEditorRow(
@@ -417,7 +435,7 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
               <Button size="sm" variant="outline" onClick={runPreview} disabled={busy !== null || status === "POSTED"}>
                 <Calculator className="mr-1.5 h-4 w-4" /> Preview
               </Button>
-              <Button size="sm" onClick={runPost} disabled={busy !== null || status === "POSTED" || status === "CANCELLED"}>
+              <Button size="sm" onClick={() => setPostOpen(true)} disabled={busy !== null || status === "POSTED" || status === "CANCELLED"}>
                 <Send className="mr-1.5 h-4 w-4" /> Post
               </Button>
             </div>
@@ -520,6 +538,14 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
         confirmLabel="Remove"
         tone="destructive"
         onConfirm={removeComponent}
+      />
+      <ConfirmDialog
+        open={postOpen}
+        onOpenChange={setPostOpen}
+        title="Post landed cost"
+        description="The Django landed-cost service will post this document and apply its backend-calculated costs."
+        confirmLabel="Post landed cost"
+        onConfirm={runPost}
       />
     </>
   );

@@ -4,6 +4,9 @@ import { PageHeader } from "@/components/common/PageHeader";
 import { Button } from "@/components/ui/button";
 import { PermissionGuard } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { entityKeyFor } from "@/features/registry/paths";
+import { isLiveSession } from "@/store/auth";
+import { LIVE_TYPED_CREATE_ENTITIES, M2_DEMO_TYPED_ENTITIES } from "@/services/api/typedEntities";
 
 export interface ModuleTab {
   to: LinkProps["to"];
@@ -33,6 +36,12 @@ export function ModuleTabsLayout({ title, description, tabs }: ModuleTabsLayoutP
   const parts = pathname.split("/").filter(Boolean);
   const isRecordView = parts.length > 2;
   const active = tabs.find((t) => pathname === String(t.to) || pathname.startsWith(String(t.to) + "/")) ?? tabs[0];
+  const activeParts = String(active?.to ?? "").split("/").filter(Boolean);
+  const activeEntity = activeParts.length > 1 ? entityKeyFor(activeParts[0], activeParts[1]) : undefined;
+  const showCreate =
+    Boolean(active?.formKey) &&
+    !(isLiveSession() && activeEntity && M2_DEMO_TYPED_ENTITIES.has(activeEntity) &&
+      !LIVE_TYPED_CREATE_ENTITIES.has(activeEntity));
 
   if (isRecordView) return <Outlet />;
 
@@ -42,7 +51,7 @@ export function ModuleTabsLayout({ title, description, tabs }: ModuleTabsLayoutP
         title={title}
         description={description}
         actions={
-          active?.formKey ? (
+          showCreate && active?.formKey ? (
             <PermissionGuard action="create" module={parts[0]}>
               <Button size="sm" className="gap-2" asChild>
                 <Link to={`${String(active.to)}/new` as never}>

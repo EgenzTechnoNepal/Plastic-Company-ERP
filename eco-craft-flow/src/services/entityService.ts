@@ -87,7 +87,13 @@ function liveTyped(entity: string): boolean {
 }
 
 function refreshLive(entity: string) {
-  invalidateLive(["records", entity], ["typed-approvals"], ["audit-logs"], ["dashboard-summary"]);
+  invalidateLive(
+    ["records", entity],
+    ["record", entity],
+    ["typed-approvals"],
+    ["audit-logs"],
+    ["dashboard-summary"],
+  );
 }
 
 async function pendingTypedApproval(recordId: string): Promise<ApprovalDto | undefined> {

@@ -61,14 +61,16 @@ function GateEntryLiveActions({ record }: { record: ErpRecord }) {
     }
   };
 
-  const cancel = async (reason?: string) => {
+  const cancel = async (reason?: string): Promise<boolean> => {
     setBusy("cancel");
     try {
       await runTypedWorkflowAction("gate_entries", record.id, "cancelled", reason);
       toast.success(`${record.code} cancelled`);
       invalidateInbound(qc, "gate_entries", record.id, poId);
+      return true;
     } catch (err) {
       toastApiError(err);
+      return false;
     } finally {
       setBusy(null);
     }

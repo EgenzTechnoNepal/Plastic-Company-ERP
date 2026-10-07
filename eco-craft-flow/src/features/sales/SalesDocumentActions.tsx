@@ -34,17 +34,18 @@ export function SalesDocumentActions({ entity, record }: { entity: string; recor
       ["records", "inventory_lots"],
     );
 
-  const run = async (label: string, fn: () => Promise<unknown>) => {
+  const run = async (label: string, fn: () => Promise<unknown>): Promise<boolean> => {
     setBusy(label);
     try {
       await fn();
       refresh();
       toast.success(`${record.code} ${label}`);
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : `${label} failed`);
+      return false;
     } finally {
       setBusy("");
-      setCancelOpen(false);
     }
   };
 

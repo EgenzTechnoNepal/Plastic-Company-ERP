@@ -1587,7 +1587,11 @@ function salesStatus(raw: string | undefined): DocStatus {
   return statusMap(raw);
 }
 
-function mapTypedSalesOrder(r: SalesOrderRow, balances: Record<string, InventoryBalanceDto | undefined> = {}): ErpRecord {
+function mapTypedSalesOrder(
+  r: SalesOrderRow,
+  balances: Record<string, InventoryBalanceDto | undefined> = {},
+  currencyCode?: string,
+): ErpRecord {
   const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
     id: l.id || `sl-${i}`,
     item: String(l.item ?? ""),
@@ -1615,6 +1619,7 @@ function mapTypedSalesOrder(r: SalesOrderRow, balances: Record<string, Inventory
         customer: r.customer,
         customerName: r.customer,
         currency: r.currency,
+        currencyCode: currencyCode || undefined,
         warehouse: r.warehouse,
         requestedDeliveryDate: r.requested_delivery_date,
         deliveryDate: r.requested_delivery_date,
@@ -1652,16 +1657,22 @@ function mapTypedSalesOrder(r: SalesOrderRow, balances: Record<string, Inventory
 }
 
 export async function listTypedSalesOrders(query?: TypedListQuery): Promise<ErpRecord[]> {
-  const rows = await listRows<SalesOrderRow>(
-    PHASE3_TYPED_API.salesOrders,
-    cleanListQuery(query, ["company", "customer", "status", "page", "page_size"]),
-  );
-  return rows.map((r) => mapTypedSalesOrder(r));
+  const [rows, currencies] = await Promise.all([
+    listRows<SalesOrderRow>(
+      PHASE3_TYPED_API.salesOrders,
+      cleanListQuery(query, ["company", "customer", "status", "page", "page_size"]),
+    ),
+    currencyCodeMap(),
+  ]);
+  return rows.map((r) => mapTypedSalesOrder(r, {}, currencies.get(String(r.currency ?? ""))));
 }
 
 export async function getTypedSalesOrder(id: string): Promise<ErpRecord> {
   const pk = await resolveTypedDetailId("sales_orders", id);
-  const row = await apiFetch<SalesOrderRow>(`${PHASE3_TYPED_API.salesOrders}${pk}/`, { silent: true });
+  const [row, currencies] = await Promise.all([
+    apiFetch<SalesOrderRow>(`${PHASE3_TYPED_API.salesOrders}${pk}/`, { silent: true }),
+    currencyCodeMap(),
+  ]);
   const balances = Object.fromEntries(
     await Promise.all(
       (row.lines ?? []).map(async (line) => [
@@ -1670,7 +1681,7 @@ export async function getTypedSalesOrder(id: string): Promise<ErpRecord> {
       ]),
     ),
   );
-  return mapTypedSalesOrder(row, balances);
+  return mapTypedSalesOrder(row, balances, currencies.get(String(row.currency ?? "")));
 }
 
 export async function createTypedSalesOrder(partial: Partial<ErpRecord>): Promise<ErpRecord> {

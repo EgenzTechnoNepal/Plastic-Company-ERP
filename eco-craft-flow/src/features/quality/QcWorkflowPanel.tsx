@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -56,6 +57,7 @@ export function QcWorkflowPanel({
   const [failDisposition, setFailDisposition] = useState("QUARANTINED");
   const [disposeNote, setDisposeNote] = useState("");
   const [lastDispose, setLastDispose] = useState<DisposeResult | null>(null);
+  const [confirmAction, setConfirmAction] = useState<"fail" | "return" | "scrap" | null>(null);
   const status = String(record.fields?.serverStatus ?? record.status ?? "").toUpperCase();
   const lotStatus = String(record.fields?.lotStatus ?? "");
   const failed = status === "FAILED";
@@ -85,20 +87,22 @@ export function QcWorkflowPanel({
     onUpdated?.(next);
   };
 
-  const run = async (fn: () => Promise<QCInspectionDto>, okMsg: string) => {
+  const run = async (fn: () => Promise<QCInspectionDto>, okMsg: string): Promise<boolean> => {
     setBusy(true);
     try {
       const dto = await fn();
       toast.success(okMsg);
       refresh(mapDto(dto, record));
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "QC action failed");
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  const dispose = async (action: "RETURN" | "SCRAP") => {
+  const dispose = async (action: "RETURN" | "SCRAP"): Promise<boolean> => {
     setBusy(true);
     try {
       const result = await qcDisposeInspection(id, action, disposeNote);
@@ -121,8 +125,10 @@ export function QcWorkflowPanel({
       void qc.invalidateQueries({ queryKey: ["records", "qc_inspections"] });
       void qc.invalidateQueries({ queryKey: ["records", "grns"] });
       void qc.invalidateQueries({ queryKey: ["records", "stock_movements"] });
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Dispose failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -198,7 +204,7 @@ export function QcWorkflowPanel({
               type="button"
               variant="destructive"
               disabled={busy || !canInspect}
-              onClick={() => run(() => qcFailInspection(id, failDisposition), `QC Fail - ${failDisposition.toLowerCase()}`)}
+              onClick={() => setConfirmAction("fail")}
             >
               Fail
             </Button>
@@ -221,7 +227,7 @@ export function QcWorkflowPanel({
                 size="sm"
                 type="button"
                 disabled={busy || Boolean(lastDispose)}
-                onClick={() => dispose("RETURN")}
+                onClick={() => setConfirmAction("return")}
               >
                 Return to vendor (PRT + DBN)
               </Button>
@@ -230,7 +236,7 @@ export function QcWorkflowPanel({
                 type="button"
                 variant="outline"
                 disabled={busy || Boolean(lastDispose)}
-                onClick={() => dispose("SCRAP")}
+                onClick={() => setConfirmAction("scrap")}
               >
                 Scrap / write-off
               </Button>
@@ -245,6 +251,41 @@ export function QcWorkflowPanel({
           </div>
         ) : null}
       </CardContent>
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        title={
+          confirmAction === "fail"
+            ? "Fail QC inspection"
+            : confirmAction === "return"
+              ? "Return failed lot to vendor"
+              : "Scrap failed lot"
+        }
+        description={
+          confirmAction === "fail"
+            ? `This will mark the inspection failed and set the lot disposition to ${failDisposition.toLowerCase()}.`
+            : "This action changes inventory through the backend and cannot be undone here."
+        }
+        confirmLabel={
+          confirmAction === "fail"
+            ? "Fail inspection"
+            : confirmAction === "return"
+              ? "Return to vendor"
+              : "Scrap lot"
+        }
+        tone="destructive"
+        onConfirm={() => {
+          if (confirmAction === "fail") {
+            return run(
+              () => qcFailInspection(id, failDisposition),
+              `QC Fail - ${failDisposition.toLowerCase()}`,
+            );
+          }
+          if (confirmAction === "return") return dispose("RETURN");
+          if (confirmAction === "scrap") return dispose("SCRAP");
+          return false;
+        }}
+      />
     </Card>
   );
 }

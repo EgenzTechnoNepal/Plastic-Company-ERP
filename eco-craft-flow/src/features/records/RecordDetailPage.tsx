@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Pencil } from "lucide-react";
@@ -50,8 +50,15 @@ import { InboundRecordActions } from "@/features/purchase/InboundRecordActions";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
-import { isTypedEntity, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
+import {
+  isTypedEntity,
+  LIVE_TYPED_EDIT_ENTITIES,
+  M2_DEMO_TYPED_ENTITIES,
+  M2_TYPED_DETAIL_ENTITIES,
+} from "@/services/api/typedEntities";
+import { hasTypedWorkflowAction } from "@/services/api/m2Typed";
 import { logView, useApprovals, useAudit, useRecord, useRecords, useRecordsStatus } from "@/services/entityService";
+import type { DocStatus } from "@/types/erp";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -107,6 +114,8 @@ export function RecordDetailPage() {
   const audit = useAudit().filter((e) => e.recordId === record?.id || e.recordCode === code);
   const approvals = useApprovals().filter((a) => a.recordId === record?.id || a.recordCode === code);
   const [confirm, setConfirm] = useState<Extract<WorkflowAction, "reject" | "cancel" | "reverse" | "return"> | null>(null);
+  const [pendingAction, setPendingAction] = useState<WorkflowAction | null>(null);
+  const actionPending = useRef(false);
 
   useEffect(() => {
     if (record && entity && module) logView(module, entity, record.id, record.code);
@@ -141,14 +150,36 @@ export function RecordDetailPage() {
   const svc = getService(entity);
   const liveInboundActions = isLiveSession() && (entity === "gate_entries" || entity === "grns");
   const liveSalesDocActions = isLiveSession() && isTypedEntity(entity) && (entity === "deliveries" || entity === "invoices");
-  const actions = liveInboundActions || liveSalesDocActions ? [] : workflowActions(record, def);
+  const actionTargets: Partial<Record<WorkflowAction, DocStatus>> = {
+    submit: "submitted",
+    approve: "approved",
+    reject: "rejected",
+    return: "returned",
+    cancel: "cancelled",
+    post: "posted",
+    reverse: "reversed",
+    start: "in_progress",
+    complete: "completed",
+    close: "closed",
+  };
+  const actions = liveInboundActions || liveSalesDocActions
+    ? []
+    : workflowActions(record, def).filter((action) => {
+        if (!isLiveSession() || !M2_DEMO_TYPED_ENTITIES.has(entity)) return true;
+        if (action === "edit") return LIVE_TYPED_EDIT_ENTITIES.has(entity);
+        const target = actionTargets[action];
+        return target !== undefined && hasTypedWorkflowAction(entity, target);
+      });
   // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
   const localPanels = !(isLiveSession() && isTypedEntity(entity));
   const inboundPoId =
     !localPanels && entity === "purchase_orders" ? String(record.fields.typedPurchaseOrderId ?? "") : "";
   const list = listPathFor(entity);
 
-  const run = async (action: WorkflowAction, reason?: string) => {
+  const run = async (action: WorkflowAction, reason?: string): Promise<boolean> => {
+    if (actionPending.current) return false;
+    actionPending.current = true;
+    setPendingAction(action);
     try {
       if (action === "submit") await svc.submit(record.id);
       if (action === "approve") await svc.approve(record.id);
@@ -174,8 +205,13 @@ export function RecordDetailPage() {
         close: "closed",
       };
       toast.success(`${record.code} ${done[action]}`);
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
+      return false;
+    } finally {
+      actionPending.current = false;
+      setPendingAction(null);
     }
   };
 
@@ -197,7 +233,7 @@ export function RecordDetailPage() {
               <>
                 {def.printable && (
                   <Button size="sm" variant="outline" asChild>
-                    <Link to={`${recordPath(entity, record.code)}/preview` as never}>Preview</Link>
+                    <Link to={`${recordPath(entity, detailRef)}/preview` as never}>Preview</Link>
                   </Button>
                 )}
                 {localPanels && (
@@ -220,71 +256,71 @@ export function RecordDetailPage() {
                 )}
                 {actions.includes("submit") && (
                   <PermissionGuard action="submit" module={module}>
-                    <Button size="sm" onClick={() => run("submit")}>
-                      Submit
+                    <Button size="sm" onClick={() => void run("submit")} disabled={pendingAction !== null}>
+                      {pendingAction === "submit" ? "Submitting…" : "Submit"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("approve") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" onClick={() => run("approve")}>
-                      Approve
+                    <Button size="sm" onClick={() => void run("approve")} disabled={pendingAction !== null}>
+                      {pendingAction === "approve" ? "Approving…" : "Approve"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("reject") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("reject")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("reject")} disabled={pendingAction !== null}>
                       Reject
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("return") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("return")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("return")} disabled={pendingAction !== null}>
                       Return
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("post") && (
                   <PermissionGuard action="post" module={module}>
-                    <Button size="sm" onClick={() => run("post")}>
-                      Post
+                    <Button size="sm" onClick={() => void run("post")} disabled={pendingAction !== null}>
+                      {pendingAction === "post" ? "Posting…" : "Post"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("cancel") && (
                   <PermissionGuard action="cancel" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")} disabled={pendingAction !== null}>
                       Cancel
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("reverse") && (
                   <PermissionGuard action="reverse" module={module}>
-                    <Button size="sm" variant="destructive" onClick={() => setConfirm("reverse")}>
+                    <Button size="sm" variant="destructive" onClick={() => setConfirm("reverse")} disabled={pendingAction !== null}>
                       Reverse
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("start") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" onClick={() => run("start")}>
-                      Start
+                    <Button size="sm" onClick={() => void run("start")} disabled={pendingAction !== null}>
+                      {pendingAction === "start" ? "Starting…" : "Start"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("complete") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" onClick={() => run("complete")}>
-                      Mark Complete
+                    <Button size="sm" onClick={() => void run("complete")} disabled={pendingAction !== null}>
+                      {pendingAction === "complete" ? "Completing…" : "Mark Complete"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("close") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => run("close")}>
-                      Close
+                    <Button size="sm" variant="outline" onClick={() => void run("close")} disabled={pendingAction !== null}>
+                      {pendingAction === "close" ? "Closing…" : "Close"}
                     </Button>
                   </PermissionGuard>
                 )}
@@ -377,7 +413,8 @@ export function RecordDetailPage() {
         confirmLabel={confirm === "reject" ? "Reject" : confirm === "cancel" ? "Cancel document" : confirm === "return" ? "Return" : "Reverse"}
         tone="destructive"
         onConfirm={async (reason) => {
-          if (confirm) await run(confirm, reason);
+          if (!confirm) return false;
+          return run(confirm, reason);
         }}
       />
     </>
