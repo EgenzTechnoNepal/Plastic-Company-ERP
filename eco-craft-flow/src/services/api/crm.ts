@@ -6,7 +6,7 @@ import { API_V1 } from "./endpoints";
 import { apiFetch, apiFetchMeta } from "./client";
 import type { DocStatus, ErpRecord } from "@/types/erp";
 import type { TypedListQuery } from "./m2Typed";
-import { organizationApi } from "./organization";
+import { resolveCompanyContextId } from "./companyContext";
 
 export const CRM_TYPED_API = {
   customers: `${API_V1}/crm/customer-masters/`,
@@ -100,15 +100,15 @@ export type ApprovalDto = {
   updated_at: string;
 };
 
-let cachedCompanyId: string | null = null;
-
 export async function resolveDefaultCompanyId(): Promise<string> {
-  if (cachedCompanyId) return cachedCompanyId;
-  const companies = await organizationApi.companies();
-  const active = companies.find((c) => c.is_active) ?? companies[0];
-  if (!active) throw new Error("No company available for CRM create.");
-  cachedCompanyId = active.id;
-  return cachedCompanyId;
+  try {
+    return await resolveCompanyContextId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "No company context available.") {
+      throw new Error("No company available for CRM create.");
+    }
+    throw error;
+  }
 }
 
 function unwrapList<T>(payload: unknown): T[] {

@@ -2,7 +2,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { API_V1 } from "./endpoints";
 import { apiFetch, apiFetchMeta } from "./client";
-import { resolveDefaultCompanyId } from "./crm";
+import { resolveCompanyContextId } from "./companyContext";
 import { useAuthStore } from "@/store/auth";
 import { PHASE2_TYPED_API } from "./phase2";
 import { PHASE3_TYPED_API } from "./phase3";
@@ -47,7 +47,7 @@ export type DashboardSummary = {
 };
 
 export async function fetchDashboardSummary(): Promise<DashboardSummary> {
-  const company = await resolveDefaultCompanyId();
+  const company = await resolveCompanyContextId();
   return apiFetch<DashboardSummary>(`${API_V1}/system/dashboard-summary/`, {
     query: { company },
     silent: true,
@@ -79,7 +79,7 @@ export async function fetchDashboardCount(
   path: string,
   filters: { status?: string } = {},
 ): Promise<number> {
-  const company = await resolveDefaultCompanyId();
+  const company = await resolveCompanyContextId();
   const { meta } = await apiFetchMeta<unknown>(path, {
     query: { company, page_size: 1, ...filters },
     silent: true,
