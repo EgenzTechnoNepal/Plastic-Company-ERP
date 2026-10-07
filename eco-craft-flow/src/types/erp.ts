@@ -128,7 +128,7 @@ export interface ApprovalRequest {
   totalLevels: number;
   dueDate: string;
   priority: "low" | "normal" | "high";
-  status: "pending" | "approved" | "rejected" | "returned" | "delegated" | "cancelled";
+  status: "draft" | "pending" | "approved" | "rejected" | "returned" | "delegated" | "cancelled";
   approverRole: string;
   /** Present when the row comes from the typed ApprovalRequest API (live session). */
   typed?: boolean;

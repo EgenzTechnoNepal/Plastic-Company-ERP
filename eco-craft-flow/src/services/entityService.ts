@@ -91,7 +91,7 @@ function refreshLive(entity: string) {
 }
 
 async function pendingTypedApproval(recordId: string): Promise<ApprovalDto | undefined> {
-  const rows = await listTypedApprovals("PENDING");
+  const rows = await listTypedApprovals({ status: "PENDING" });
   return rows.find((r) => r.target_id === recordId);
 }
 
@@ -559,7 +559,7 @@ export function useNotifications(): NotificationItem[] {
   const live = useAuthStore((s) => s.source === "api");
   return live ? EMPTY_NOTIFICATIONS : mock;
 }
-const TYPED_TARGET_ENTITY: Record<string, string> = {
+export const TYPED_TARGET_ENTITY: Record<string, string> = {
   "crm.Customer": "customers",
   "procurement.Supplier": "suppliers",
   "procurement.PurchaseOrder": "purchase_orders",
@@ -568,9 +568,9 @@ const TYPED_TARGET_ENTITY: Record<string, string> = {
   "sales.SalesInvoice": "invoices",
 };
 
-const TYPED_APPROVAL_STATUS: Record<string, ApprovalRequest["status"]> = {
+const TYPED_APPROVAL_STATUS: Record<ApprovalDto["status"], ApprovalRequest["status"]> = {
   PENDING: "pending",
-  DRAFT: "pending",
+  DRAFT: "draft",
   APPROVED: "approved",
   REJECTED: "rejected",
   CANCELLED: "cancelled",
@@ -591,7 +591,7 @@ function typedApprovalToRequest(r: ApprovalDto): ApprovalRequest {
     totalLevels: 1,
     dueDate: r.requested_at?.slice(0, 10) ?? "",
     priority: "normal",
-    status: TYPED_APPROVAL_STATUS[r.status] ?? "pending",
+    status: TYPED_APPROVAL_STATUS[r.status],
     approverRole: "manager",
     mode: "sequential",
     createdAt: r.requested_at,
