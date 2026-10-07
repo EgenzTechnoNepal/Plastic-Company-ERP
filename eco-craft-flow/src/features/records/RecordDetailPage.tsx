@@ -146,7 +146,7 @@ export function RecordDetailPage() {
   };
 
   const sections = groupFields(def);
-  const detailRef = entity === "shipments" ? record.id : record.code;
+  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit"].includes(entity) ? record.id : record.code;
 
   return (
     <>
@@ -284,14 +284,7 @@ export function RecordDetailPage() {
             {localPanels && entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}
             {(entity === "gate_entries" || entity === "grns") && <LcGateGuardBanner record={record} />}
-            {entity === "letters_of_credit" && (
-              <LcWorkflowPanel
-                record={record}
-                onUpdated={() => {
-                  toast.success("LC updated — refresh list if status looks stale");
-                }}
-              />
-            )}
+            {entity === "letters_of_credit" && <LcWorkflowPanel record={record} />}
             {entity === "boms" && <BomExplosion bom={record} />}
             {entity === "production_plans" && <PlanPanel plan={record} />}
             {entity === "mrp_runs" && <MrpPanel run={record} />}

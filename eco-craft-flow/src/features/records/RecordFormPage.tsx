@@ -56,6 +56,10 @@ function errorText(value: unknown): string | undefined {
   return String(value);
 }
 
+function fieldError(errors: Record<string, string>, ...keys: string[]) {
+  return keys.map((key) => errors[key]).find(Boolean);
+}
+
 function formErrorFrom(err: unknown): { message: string; fields: Record<string, string> } {
   if (err instanceof ApiError) {
     const fields = Object.fromEntries(
@@ -380,6 +384,248 @@ function ShipmentFields({
   );
 }
 
+function BackendRecordSelect({
+  entity,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  id,
+}: {
+  entity: string;
+  value: unknown;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder: string;
+  id: string;
+}) {
+  const rows = useRecords(entity);
+  return (
+    <Select value={String(value ?? "") || undefined} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger id={id}>
+        <SelectValue placeholder={placeholder} />
+      </SelectTrigger>
+      <SelectContent>
+        {rows.map((row) => (
+          <SelectItem key={row.id} value={row.id}>
+            {row.code} - {row.title}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ProformaInvoiceFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const purchaseOrders = useRecords("purchase_orders");
+  const setPurchaseOrder = (value: string) => {
+    onChange("purchaseOrder", value);
+    const po = purchaseOrders.find((row) => row.id === value);
+    if (po?.fields.supplier) onChange("supplier", po.fields.supplier);
+  };
+  const currencies = ["USD", "NPR", "INR", "CNY"];
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Proforma Invoice</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Header">
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-po">Purchase Order<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="pi-po" entity="purchase_orders" value={fields.purchaseOrder} onChange={setPurchaseOrder} disabled={disabled} placeholder="Select PO..." />
+            {fieldError(errors, "purchase_order", "purchaseOrder") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "purchase_order", "purchaseOrder")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-supplier">Supplier</Label>
+            <BackendRecordSelect id="pi-supplier" entity="suppliers" value={fields.supplier} onChange={(v) => onChange("supplier", v)} disabled={disabled} placeholder="Select supplier..." />
+            {fieldError(errors, "supplier", "supplier_id") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "supplier", "supplier_id")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-seller-number">Seller PI Number</Label>
+            <Input id="pi-seller-number" value={String(fields.sellerPiNumber ?? "")} onChange={(e) => onChange("sellerPiNumber", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "seller_pi_number", "sellerPiNumber") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "seller_pi_number", "sellerPiNumber")}</p>}
+          </div>
+        </FormSection>
+        <FormSection title="Commercial">
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-currency">Currency</Label>
+            <Select value={String(fields.currencyCode ?? "") || undefined} onValueChange={(v) => onChange("currencyCode", v)} disabled={disabled}>
+              <SelectTrigger id="pi-currency">
+                <SelectValue placeholder="Select currency..." />
+              </SelectTrigger>
+              <SelectContent>
+                {currencies.map((currency) => (
+                  <SelectItem key={currency} value={currency}>{currency}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldError(errors, "currency_code", "currencyCode") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "currency_code", "currencyCode")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-total">Total Amount<span className="ml-0.5 text-destructive">*</span></Label>
+            <Input id="pi-total" type="number" min="0" step="0.01" value={String(fields.totalAmount ?? "")} onChange={(e) => onChange("totalAmount", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "total_amount", "totalAmount") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "total_amount", "totalAmount")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-payment-terms">Payment Terms</Label>
+            <Input id="pi-payment-terms" value={String(fields.paymentTerms ?? "")} onChange={(e) => onChange("paymentTerms", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "payment_terms", "paymentTerms") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "payment_terms", "paymentTerms")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-lead-time">Lead Time (days)</Label>
+            <Input id="pi-lead-time" type="number" min="0" step="1" value={String(fields.leadTimeDays ?? "")} onChange={(e) => onChange("leadTimeDays", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "lead_time_days", "leadTimeDays") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "lead_time_days", "leadTimeDays")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-delivery">Expected Delivery</Label>
+            <Input id="pi-delivery" type="date" value={String(fields.expectedDeliveryDate ?? "")} onChange={(e) => onChange("expectedDeliveryDate", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "expected_delivery_date", "expectedDeliveryDate") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "expected_delivery_date", "expectedDeliveryDate")}</p>}
+          </div>
+        </FormSection>
+        <FormSection title="Documents">
+          <div className="space-y-1.5">
+            <Label htmlFor="pi-attachment">Attachment URL</Label>
+            <Input id="pi-attachment" value={String(fields.attachmentUrl ?? "")} onChange={(e) => onChange("attachmentUrl", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "attachment_url", "attachmentUrl") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "attachment_url", "attachmentUrl")}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="pi-notes">Notes</Label>
+            <Textarea id="pi-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
+function LetterOfCreditFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const purchaseOrders = useRecords("purchase_orders");
+  const proformaInvoices = useRecords("proforma_invoices");
+  const setPurchaseOrder = (value: string) => {
+    onChange("purchaseOrder", value);
+    const po = purchaseOrders.find((row) => row.id === value);
+    if (po?.fields.supplier) onChange("supplier", po.fields.supplier);
+  };
+  const setProformaInvoice = (value: string) => {
+    onChange("proformaInvoice", value);
+    const pi = proformaInvoices.find((row) => row.id === value);
+    if (pi?.fields.purchaseOrder && !fields.purchaseOrder) onChange("purchaseOrder", pi.fields.purchaseOrder);
+    if (pi?.fields.supplier) onChange("supplier", pi.fields.supplier);
+    if (pi?.fields.currencyCode) onChange("currencyCode", pi.fields.currencyCode);
+    if (pi?.fields.totalAmount) onChange("amount", pi.fields.totalAmount);
+  };
+  const currencies = ["USD", "NPR", "INR", "CNY"];
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Letter of Credit</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Header">
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-po">Purchase Order<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="lc-po" entity="purchase_orders" value={fields.purchaseOrder} onChange={setPurchaseOrder} disabled={disabled} placeholder="Select PO..." />
+            {fieldError(errors, "purchase_order", "purchaseOrder") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "purchase_order", "purchaseOrder")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-pi">Proforma Invoice<span className="ml-0.5 text-destructive">*</span></Label>
+            <BackendRecordSelect id="lc-pi" entity="proforma_invoices" value={fields.proformaInvoice} onChange={setProformaInvoice} disabled={disabled} placeholder="Select PI..." />
+            {fieldError(errors, "proforma_invoice", "proformaInvoice") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "proforma_invoice", "proformaInvoice")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-supplier">Supplier</Label>
+            <BackendRecordSelect id="lc-supplier" entity="suppliers" value={fields.supplier} onChange={(v) => onChange("supplier", v)} disabled={disabled} placeholder="Select supplier..." />
+            {fieldError(errors, "supplier", "supplier_id") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "supplier", "supplier_id")}</p>}
+          </div>
+        </FormSection>
+        <FormSection title="LC">
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-bank">Bank<span className="ml-0.5 text-destructive">*</span></Label>
+            <Input id="lc-bank" value={String(fields.bankName ?? "")} onChange={(e) => onChange("bankName", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "bank_name", "bankName") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "bank_name", "bankName")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-number">Bank LC Number</Label>
+            <Input id="lc-number" value={String(fields.lcNumber ?? "")} onChange={(e) => onChange("lcNumber", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "lc_number", "lcNumber") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "lc_number", "lcNumber")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-currency">Currency</Label>
+            <Select value={String(fields.currencyCode ?? "") || undefined} onValueChange={(v) => onChange("currencyCode", v)} disabled={disabled}>
+              <SelectTrigger id="lc-currency">
+                <SelectValue placeholder="Select currency..." />
+              </SelectTrigger>
+              <SelectContent>
+                {currencies.map((currency) => (
+                  <SelectItem key={currency} value={currency}>{currency}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {fieldError(errors, "currency_code", "currencyCode") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "currency_code", "currencyCode")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-amount">LC Amount<span className="ml-0.5 text-destructive">*</span></Label>
+            <Input id="lc-amount" type="number" min="0" step="0.01" value={String(fields.amount ?? "")} onChange={(e) => onChange("amount", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "amount") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "amount")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-expiry">Expiry Date</Label>
+            <Input id="lc-expiry" type="date" value={String(fields.expiryDate ?? "")} onChange={(e) => onChange("expiryDate", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "expiry_date", "expiryDate") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "expiry_date", "expiryDate")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-latest-shipment">Latest Shipment</Label>
+            <Input id="lc-latest-shipment" type="date" value={String(fields.latestShipmentDate ?? "")} onChange={(e) => onChange("latestShipmentDate", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "latest_shipment_date", "latestShipmentDate") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "latest_shipment_date", "latestShipmentDate")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-draft-scan">Draft LC scan URL</Label>
+            <Input id="lc-draft-scan" value={String(fields.draftScanUrl ?? "")} onChange={(e) => onChange("draftScanUrl", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "draft_scan_url", "draftScanUrl") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "draft_scan_url", "draftScanUrl")}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lc-final-number">Final LC Number</Label>
+            <Input id="lc-final-number" value={String(fields.finalLcNumber ?? "")} onChange={(e) => onChange("finalLcNumber", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "final_lc_number", "finalLcNumber") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "final_lc_number", "finalLcNumber")}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="lc-seller-note">Seller Approval Note</Label>
+            <Textarea id="lc-seller-note" rows={3} value={String(fields.sellerApprovalNote ?? "")} onChange={(e) => onChange("sellerApprovalNote", e.target.value)} disabled={disabled} />
+            {fieldError(errors, "seller_approval_note", "sellerApprovalNote") && <p className="text-xs font-medium text-destructive">{fieldError(errors, "seller_approval_note", "sellerApprovalNote")}</p>}
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="lc-notes">Notes</Label>
+            <Textarea id="lc-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const params = useParams({ strict: false }) as { entity?: string; id?: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -395,6 +641,9 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const isProductForm = entity === "products";
   const isPurchaseOrderForm = entity === "purchase_orders";
   const isShipmentForm = entity === "shipments";
+  const isProformaInvoiceForm = entity === "proforma_invoices";
+  const isLetterOfCreditForm = entity === "letters_of_credit";
+  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm;
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
@@ -415,9 +664,12 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
     if (isShipmentForm && mode === "new") {
       fields.isActive = true;
     }
+    if ((isProformaInvoiceForm || isLetterOfCreditForm) && mode === "new") {
+      fields.currencyCode = fields.currencyCode || "USD";
+    }
     return fields;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm]);
+  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm, isProformaInvoiceForm, isLetterOfCreditForm]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {
@@ -605,7 +857,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         });
         toast.success(`${created.code} saved`);
         setDirty(false);
-        navigate({ to: recordPath(entity, isShipmentForm ? created.id : created.code) as never });
+        navigate({ to: recordPath(entity, detailRouteById ? created.id : created.code) as never });
       } else if (existing) {
         const updated = await svc.update(existing.id, {
           title,
@@ -614,7 +866,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         });
         toast.success(`${updated.code} updated`);
         setDirty(false);
-        navigate({ to: recordPath(entity, isShipmentForm ? updated.id : updated.code) as never });
+        navigate({ to: recordPath(entity, detailRouteById ? updated.id : updated.code) as never });
       }
     } catch (err) {
       const nextError = formErrorFrom(err);
@@ -627,7 +879,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   };
 
   const back = () => {
-    const to = mode === "edit" && existing ? recordPath(entity, isShipmentForm ? existing.id : existing.code) : list;
+    const to = mode === "edit" && existing ? recordPath(entity, detailRouteById ? existing.id : existing.code) : list;
     if (dirty) {
       setPendingTo(to);
       setDiscardOpen(true);
@@ -738,6 +990,10 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
         {isPurchaseOrderForm && mode === "new" ? (
           <PurchaseOrderFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : isProformaInvoiceForm ? (
+          <ProformaInvoiceFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : isLetterOfCreditForm ? (
+          <LetterOfCreditFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
         ) : isShipmentForm ? (
           <ShipmentFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
         ) : sections.map(([title, sectionFields]) => (

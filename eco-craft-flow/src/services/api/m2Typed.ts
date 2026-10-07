@@ -851,42 +851,52 @@ export async function createTypedProformaInvoice(partial: Partial<ErpRecord>): P
   const company = await resolveDefaultCompanyId();
   const fields = (partial.fields ?? {}) as Record<string, unknown>;
   const poId = await resolvePoId(fields.purchaseOrder ?? fields.typedPurchaseOrderId);
-  const body: Record<string, unknown> = {
-    company,
-    purchase_order: poId,
-    seller_pi_number: String(fields.sellerPiNumber ?? ""),
-    currency_code: String(fields.currencyCode ?? "USD"),
-    total_amount: String(fields.totalAmount ?? 0),
-    payment_terms: String(fields.paymentTerms ?? ""),
-    notes: String(fields.notes ?? partial.title ?? ""),
-    attachment_url: String(fields.attachmentUrl ?? ""),
-  };
-  if (fields.supplier) body.supplier = fields.supplier;
-  if (fields.leadTimeDays != null && fields.leadTimeDays !== "") body.lead_time_days = Number(fields.leadTimeDays);
-  if (fields.expectedDeliveryDate) body.expected_delivery_date = fields.expectedDeliveryDate;
+  const body = await proformaInvoicePayload(fields, company, partial.title);
 
-  const created = await apiFetch<Named & { seller_pi_number?: string; total_amount?: string; purchase_order?: string }>(
+  const created = await apiFetch<ProformaInvoiceRow>(
     PHASE3_TYPED_API.proformaInvoices,
     { method: "POST", body },
   );
-  return baseRecord(
-    "proforma_invoices",
-    created.id,
-    created.document_number ?? created.id,
-    created.seller_pi_number || created.document_number || "Proforma Invoice",
-    created.status ?? "RECEIVED",
-    {
-      purchaseOrder: created.purchase_order ?? poId,
-      sellerPiNumber: created.seller_pi_number,
-      totalAmount: Number(created.total_amount ?? fields.totalAmount ?? 0),
-      currencyCode: fields.currencyCode,
-      leadTimeDays: fields.leadTimeDays,
-      typedId: created.id,
-    },
-    [],
-    created.created_at,
-    created.updated_at,
-  );
+  return mapTypedProformaInvoice({ ...created, purchase_order: created.purchase_order ?? poId });
+}
+
+async function proformaInvoicePayload(
+  fields: Record<string, unknown>,
+  company?: string,
+  fallbackNotes?: string,
+): Promise<Record<string, unknown>> {
+  const poId = await resolvePoId(fields.purchaseOrder ?? fields.purchase_order ?? fields.typedPurchaseOrderId);
+  const body: Record<string, unknown> = {
+    company,
+    purchase_order: poId,
+    seller_pi_number: String(fields.sellerPiNumber ?? fields.seller_pi_number ?? ""),
+    currency_code: String(fields.currencyCode ?? fields.currency_code ?? "USD"),
+    total_amount: String(fields.totalAmount ?? fields.total_amount ?? 0),
+    payment_terms: String(fields.paymentTerms ?? fields.payment_terms ?? ""),
+    notes: String(fields.notes ?? fallbackNotes ?? ""),
+    attachment_url: String(fields.attachmentUrl ?? fields.attachment_url ?? ""),
+  };
+  if (!company) delete body.company;
+  if (fields.supplier) body.supplier = await resolveSupplierId(fields.supplier);
+  if (fields.leadTimeDays != null && fields.leadTimeDays !== "") body.lead_time_days = Number(fields.leadTimeDays);
+  else if ("leadTimeDays" in fields || "lead_time_days" in fields) body.lead_time_days = null;
+  if (fields.expectedDeliveryDate || fields.expected_delivery_date) {
+    body.expected_delivery_date = fields.expectedDeliveryDate ?? fields.expected_delivery_date;
+  } else if ("expectedDeliveryDate" in fields || "expected_delivery_date" in fields) {
+    body.expected_delivery_date = null;
+  }
+  return body;
+}
+
+export async function updateTypedProformaInvoice(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("proforma_invoices", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<ProformaInvoiceRow>(`${PHASE3_TYPED_API.proformaInvoices}${pk}/`, {
+    method: "PATCH",
+    body: await proformaInvoicePayload(fields, undefined, partial.title),
+    silent: true,
+  });
+  return mapTypedProformaInvoice(updated);
 }
 
 export async function createTypedLetterOfCredit(partial: Partial<ErpRecord>): Promise<ErpRecord> {
@@ -894,43 +904,62 @@ export async function createTypedLetterOfCredit(partial: Partial<ErpRecord>): Pr
   const company = await resolveDefaultCompanyId();
   const fields = (partial.fields ?? {}) as Record<string, unknown>;
   const poId = await resolvePoId(fields.purchaseOrder ?? fields.typedPurchaseOrderId);
-  const piId = await resolvePiId(fields.proformaInvoice);
-  const body: Record<string, unknown> = {
-    company,
-    purchase_order: poId,
-    bank_name: String(fields.bankName ?? ""),
-    lc_number: String(fields.lcNumber ?? ""),
-    currency_code: String(fields.currencyCode ?? "USD"),
-    amount: String(fields.amount ?? 0),
-    notes: String(fields.notes ?? partial.title ?? ""),
-  };
-  if (piId) body.proforma_invoice = piId;
-  if (fields.supplier) body.supplier = fields.supplier;
-  if (fields.expiryDate) body.expiry_date = fields.expiryDate;
-  if (fields.latestShipmentDate) body.latest_shipment_date = fields.latestShipmentDate;
+  const body = await letterOfCreditPayload(fields, company, partial.title);
 
-  const created = await apiFetch<Named & { bank_name?: string; amount?: string; purchase_order?: string }>(
+  const created = await apiFetch<LetterOfCreditRow>(
     PHASE3_TYPED_API.lettersOfCredit,
     { method: "POST", body },
   );
-  return baseRecord(
-    "letters_of_credit",
-    created.id,
-    created.document_number ?? created.id,
-    created.bank_name || created.document_number || "Letter of Credit",
-    created.status ?? "DRAFT",
-    {
-      purchaseOrder: created.purchase_order ?? poId,
-      proformaInvoice: piId,
-      bankName: created.bank_name ?? fields.bankName,
-      amount: Number(created.amount ?? fields.amount ?? 0),
-      currencyCode: fields.currencyCode,
-      typedId: created.id,
-    },
-    [],
-    created.created_at,
-    created.updated_at,
-  );
+  return mapTypedLetterOfCredit({ ...created, purchase_order: created.purchase_order ?? poId });
+}
+
+async function letterOfCreditPayload(
+  fields: Record<string, unknown>,
+  company?: string,
+  fallbackNotes?: string,
+): Promise<Record<string, unknown>> {
+  const poId = await resolvePoId(fields.purchaseOrder ?? fields.purchase_order ?? fields.typedPurchaseOrderId);
+  const piId = await resolvePiId(fields.proformaInvoice ?? fields.proforma_invoice);
+  const body: Record<string, unknown> = {
+    company,
+    purchase_order: poId,
+    bank_name: String(fields.bankName ?? fields.bank_name ?? ""),
+    lc_number: String(fields.lcNumber ?? fields.lc_number ?? ""),
+    currency_code: String(fields.currencyCode ?? fields.currency_code ?? "USD"),
+    amount: String(fields.amount ?? 0),
+    notes: String(fields.notes ?? fallbackNotes ?? ""),
+  };
+  if (!company) delete body.company;
+  if (piId) body.proforma_invoice = piId;
+  if (fields.supplier) body.supplier = await resolveSupplierId(fields.supplier);
+  if (fields.expiryDate || fields.expiry_date) body.expiry_date = fields.expiryDate ?? fields.expiry_date;
+  else if ("expiryDate" in fields || "expiry_date" in fields) body.expiry_date = null;
+  if (fields.latestShipmentDate || fields.latest_shipment_date) {
+    body.latest_shipment_date = fields.latestShipmentDate ?? fields.latest_shipment_date;
+  } else if ("latestShipmentDate" in fields || "latest_shipment_date" in fields) {
+    body.latest_shipment_date = null;
+  }
+  if (fields.draftScanUrl || fields.draft_scan_url) body.draft_scan_url = fields.draftScanUrl ?? fields.draft_scan_url;
+  else if ("draftScanUrl" in fields || "draft_scan_url" in fields) body.draft_scan_url = "";
+  if (fields.sellerApprovalNote || fields.seller_approval_note) {
+    body.seller_approval_note = fields.sellerApprovalNote ?? fields.seller_approval_note;
+  } else if ("sellerApprovalNote" in fields || "seller_approval_note" in fields) {
+    body.seller_approval_note = "";
+  }
+  if (fields.finalLcNumber || fields.final_lc_number) body.final_lc_number = fields.finalLcNumber ?? fields.final_lc_number;
+  else if ("finalLcNumber" in fields || "final_lc_number" in fields) body.final_lc_number = "";
+  return body;
+}
+
+export async function updateTypedLetterOfCredit(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("letters_of_credit", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<LetterOfCreditRow>(`${PHASE3_TYPED_API.lettersOfCredit}${pk}/`, {
+    method: "PATCH",
+    body: await letterOfCreditPayload(fields, undefined, partial.title),
+    silent: true,
+  });
+  return mapTypedLetterOfCredit(updated);
 }
 
 function mapTypedShipment(r: ImportShipmentRow): ErpRecord {

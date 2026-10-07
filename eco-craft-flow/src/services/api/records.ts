@@ -249,6 +249,14 @@ export async function updateRecord(
     const { updateTypedShipment } = await import("./m2Typed");
     return updateTypedShipment(id, record);
   }
+  if (entity === "proforma_invoices") {
+    const { updateTypedProformaInvoice } = await import("./m2Typed");
+    return updateTypedProformaInvoice(id, record);
+  }
+  if (entity === "letters_of_credit") {
+    const { updateTypedLetterOfCredit } = await import("./m2Typed");
+    return updateTypedLetterOfCredit(id, record);
+  }
   if (entity === "warehouses") {
     const { updateTypedWarehouse } = await import("./m2Typed");
     return updateTypedWarehouse(id, record);

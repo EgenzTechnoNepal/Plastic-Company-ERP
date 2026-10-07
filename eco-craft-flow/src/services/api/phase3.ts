@@ -279,6 +279,13 @@ export function lcMarkManufacturing(id: string) {
   });
 }
 
+export function lcStartPreDispatch(id: string) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcStartPreDispatch(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
 export function lcVerifyPreDispatch(id: string, presentKeys: string[]) {
   return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcVerifyPreDispatch(id), {
     method: "POST",
@@ -286,4 +293,3 @@ export function lcVerifyPreDispatch(id: string, presentKeys: string[]) {
     silent: true,
   });
 }
-
