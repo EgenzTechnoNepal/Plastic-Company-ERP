@@ -51,3 +51,8 @@ SUPPLIER_UPDATED = "SupplierUpdated"
 APPROVAL_REQUESTED = "ApprovalRequested"
 APPROVAL_APPROVED = "ApprovalApproved"
 APPROVAL_REJECTED = "ApprovalRejected"
+APPROVAL_CANCELLED = "ApprovalCancelled"
+
+# Phase 3 — Production / BOM
+MATERIAL_ISSUED = "MaterialIssued"
+PRODUCTION_OUTPUT_POSTED = "ProductionOutputPosted"
