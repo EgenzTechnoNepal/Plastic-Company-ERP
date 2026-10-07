@@ -643,7 +643,8 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const isShipmentForm = entity === "shipments";
   const isProformaInvoiceForm = entity === "proforma_invoices";
   const isLetterOfCreditForm = entity === "letters_of_credit";
-  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm;
+  const isLandedCostForm = entity === "landed_cost_documents";
+  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm || isLandedCostForm;
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
@@ -667,9 +668,14 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
     if ((isProformaInvoiceForm || isLetterOfCreditForm) && mode === "new") {
       fields.currencyCode = fields.currencyCode || "USD";
     }
+    if (isLandedCostForm && mode === "new") {
+      fields.currency = fields.currency || "NPR";
+      fields.purchaseQuantity = fields.purchaseQuantity || 0;
+      fields.purchaseUnitCost = fields.purchaseUnitCost || 0;
+    }
     return fields;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm, isProformaInvoiceForm, isLetterOfCreditForm]);
+  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm, isProformaInvoiceForm, isLetterOfCreditForm, isLandedCostForm]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {

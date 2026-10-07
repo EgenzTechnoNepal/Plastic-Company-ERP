@@ -9,6 +9,7 @@ import {
   ChartColumn,
   Ruler,
   Tags,
+  ReceiptText,
 } from "lucide-react";
 import { ModuleTabsLayout, type ModuleTab } from "@/components/layout/ModuleTabsLayout";
 
@@ -27,6 +28,13 @@ const TABS: readonly ModuleTab[] = [
   { to: "/inventory/uom", label: "UOM", icon: Ruler },
   { to: "/inventory/supplier-prices", label: "Supplier Prices", icon: Tags },
   { to: "/inventory/planning", label: "MOQ / Reorder", icon: ClipboardList },
+  {
+    to: "/inventory/landed-cost",
+    label: "Landed Cost",
+    icon: ReceiptText,
+    formKey: "landedCostDocument",
+    formLabel: "New Landed Cost",
+  },
   {
     to: "/inventory/movements",
     label: "Movements",

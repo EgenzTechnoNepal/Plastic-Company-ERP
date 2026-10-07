@@ -366,10 +366,7 @@ function LotLanded({
 }) {
   const currency = j.purchase_order.currency;
   const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const entered = useMemo(
-    () => Object.values(amounts).reduce((sum, v) => sum + (Number(v) > 0 ? Number(v) : 0), 0),
-    [amounts],
-  );
+  const hasEnteredCost = useMemo(() => Object.values(amounts).some((v) => Number(v) > 0), [amounts]);
   return (
     <div className="space-y-3">
       {lot.landed_costs.map((d) => (
@@ -423,7 +420,7 @@ function LotLanded({
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="sm"
-              disabled={busy !== null || entered <= 0}
+              disabled={busy !== null || !hasEnteredCost}
               onClick={() =>
                 run(
                   `landed-${lot.id}`,
@@ -440,7 +437,7 @@ function LotLanded({
             >
               Post landed cost
             </Button>
-            <span className="text-xs text-muted-foreground">Additional costs entered: {money(String(entered), currency)}</span>
+            <span className="text-xs text-muted-foreground">Django calculates the posted landed total and unit cost.</span>
           </div>
         </div>
       )}

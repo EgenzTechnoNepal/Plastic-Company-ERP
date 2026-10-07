@@ -216,6 +216,10 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedShipment } = await import("./m2Typed");
     return createTypedShipment(record);
   }
+  if (entity === "landed_cost_documents") {
+    const { createTypedLandedCostDocument } = await import("./m2Typed");
+    return createTypedLandedCostDocument(record);
+  }
   if (isTypedEntity(entity)) throw typedUnavailable(entity, "Creating records");
   const row = await apiFetch<RecordDto>(pathFor(entity), {
     method: "POST",
@@ -257,6 +261,10 @@ export async function updateRecord(
   if (entity === "letters_of_credit") {
     const { updateTypedLetterOfCredit } = await import("./m2Typed");
     return updateTypedLetterOfCredit(id, record);
+  }
+  if (entity === "landed_cost_documents") {
+    const { updateTypedLandedCostDocument } = await import("./m2Typed");
+    return updateTypedLandedCostDocument(id, record);
   }
   if (entity === "warehouses") {
     const { updateTypedWarehouse } = await import("./m2Typed");

@@ -34,6 +34,8 @@ export const M2_TYPED_PATHS = {
   storageBins: `${API_V1}/warehouse/storage-bins/`,
   lots: `${API_V1}/inventory/lots/`,
   landedDocs: `${API_V1}/inventory/landed-cost-documents/`,
+  landedComponents: `${API_V1}/inventory/landed-cost-components/`,
+  landedAllocations: `${API_V1}/inventory/landed-cost-allocations/`,
 } as const;
 
 const UUID_RE = /^[0-9a-f-]{32,36}$/i;
@@ -270,6 +272,75 @@ type QCInspectionRow = Named & {
   coa_attachment_url?: string;
   metrics?: Record<string, unknown>;
   ncr_reference?: string;
+};
+
+type LandedCostComponentRow = {
+  id: string;
+  document?: string;
+  category?: string;
+  description?: string;
+  amount?: string;
+  currency?: string | null;
+  exchange_rate?: string;
+  base_currency_amount?: string;
+  supplier?: string | null;
+  source_document?: string;
+  source_document_number?: string;
+  tax_amount?: string;
+  cost_date?: string | null;
+  allocation_basis?: string;
+  status?: string;
+  notes?: string;
+};
+
+export type LandedCostComponentDto = LandedCostComponentRow;
+
+type LandedCostAllocationRow = {
+  id: string;
+  document?: string;
+  component?: string;
+  lot?: string | null;
+  item?: string | null;
+  allocation_basis?: string;
+  basis_value?: string;
+  allocated_amount?: string;
+  notes?: string;
+};
+
+export type LandedCostPreviewDto = {
+  document_id: string;
+  document_number: string;
+  purchase_quantity: string;
+  purchase_unit_cost: string;
+  purchase_value: string;
+  additional_costs_total: string;
+  landed_total: string;
+  landed_unit_cost: string | null;
+  components: Array<{
+    id: string;
+    category: string;
+    amount: string;
+    currency: string | null;
+    exchange_rate: string;
+    base_currency_amount: string;
+    allocation_basis: string;
+  }>;
+};
+
+type LandedCostDocumentRow = Named & {
+  company?: string;
+  document_number?: string;
+  reference?: string;
+  lot?: string | null;
+  currency?: string | null;
+  status?: string;
+  purchase_quantity?: string;
+  purchase_unit_cost?: string;
+  purchase_value?: string;
+  notes?: string;
+  components?: LandedCostComponentRow[];
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type TypedOption = { id: string; code: string; label: string };
@@ -676,6 +747,8 @@ async function resolveTypedDetailId(entity: string, ref: string): Promise<string
                 ? await listTypedGrns()
                 : entity === "qc_inspections"
                   ? await listTypedInspections()
+                  : entity === "landed_cost_documents"
+                    ? await listTypedLandedCostDocuments()
                   : [];
   const hit = rows.find((r) => r.id === raw || r.code === raw || String(r.fields?.typedId) === raw);
   if (!hit) throw new Error(`Record "${raw}" not found.`);
@@ -1431,6 +1504,198 @@ export async function getTypedInspection(id: string): Promise<ErpRecord> {
   return mapTypedInspection(row, lot);
 }
 
+function categoryLabel(category: string | undefined): string {
+  return String(category ?? "")
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function currencyCodeMap(): Promise<Map<string, string>> {
+  const rows = await listTypedCurrencies().catch(() => []);
+  return new Map(rows.flatMap((row) => [[row.id, row.code], [row.code, row.code]]));
+}
+
+async function listTypedLandedAllocations(documentId: string): Promise<LandedCostAllocationRow[]> {
+  return listRows<LandedCostAllocationRow>(
+    M2_TYPED_PATHS.landedAllocations,
+    { document: documentId, page_size: 200 },
+  ).catch(() => []);
+}
+
+export async function listTypedLandedCostComponents(documentId: string): Promise<LandedCostComponentDto[]> {
+  return listRows<LandedCostComponentDto>(
+    M2_TYPED_PATHS.landedComponents,
+    { document: documentId, is_active: true, page_size: 200 },
+  );
+}
+
+function mapTypedLandedCostDocument(
+  r: LandedCostDocumentRow,
+  currencyCode?: string,
+  allocations: LandedCostAllocationRow[] = [],
+): ErpRecord {
+  const components = (r.components ?? []).map((component) => ({
+    ...component,
+    label: categoryLabel(component.category),
+  }));
+  return baseRecord(
+    "landed_cost_documents",
+    r.id,
+    r.document_number ?? r.id,
+    r.reference || r.document_number || "Landed Cost",
+    r.status ?? "DRAFT",
+    {
+      documentNumber: r.document_number,
+      reference: r.reference,
+      lot: r.lot,
+      currency: r.currency,
+      currencyCode: currencyCode || r.currency,
+      purchaseQuantity: r.purchase_quantity,
+      purchaseUnitCost: r.purchase_unit_cost,
+      purchaseValue: r.purchase_value,
+      notes: r.notes,
+      components,
+      allocations,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedLandedCostDocuments(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const [rows, currencies] = await Promise.all([
+    listRows<LandedCostDocumentRow>(
+      M2_TYPED_PATHS.landedDocs,
+      cleanListQuery(query, ["company", "lot", "status", "is_active", "search", "page", "page_size"]),
+    ),
+    currencyCodeMap(),
+  ]);
+  return rows.map((r) => mapTypedLandedCostDocument(r, currencies.get(String(r.currency ?? ""))));
+}
+
+export async function getTypedLandedCostDocument(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("landed_cost_documents", id);
+  const [row, currencies, allocations] = await Promise.all([
+    apiFetch<LandedCostDocumentRow>(`${M2_TYPED_PATHS.landedDocs}${pk}/`, { silent: true }),
+    currencyCodeMap(),
+    listTypedLandedAllocations(pk),
+  ]);
+  return mapTypedLandedCostDocument(row, currencies.get(String(row.currency ?? "")), allocations);
+}
+
+function landedCostPayload(fields: Record<string, unknown>, code?: string, company?: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    document_number: String(fields.documentNumber ?? fields.document_number ?? code ?? "").trim(),
+    reference: String(fields.reference ?? ""),
+    lot: String(fields.lot ?? "").trim() || null,
+    purchase_quantity: String(fields.purchaseQuantity ?? fields.purchase_quantity ?? 0),
+    purchase_unit_cost: String(fields.purchaseUnitCost ?? fields.purchase_unit_cost ?? 0),
+    notes: String(fields.notes ?? ""),
+  };
+  if (company) body.company = company;
+  if (fields.currency) body.currency = fields.currency;
+  return body;
+}
+
+export async function createTypedLandedCostDocument(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const currency = await resolveCurrencyId(fields.currency);
+  const body = landedCostPayload({ ...fields, currency }, partial.code, company);
+  if (!body.document_number) throw new Error("Document number is required.");
+  if (!body.currency) throw new Error("Currency is required.");
+  const created = await apiFetch<LandedCostDocumentRow>(M2_TYPED_PATHS.landedDocs, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+  return getTypedLandedCostDocument(created.id);
+}
+
+export async function updateTypedLandedCostDocument(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("landed_cost_documents", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const currency = await resolveCurrencyId(fields.currency);
+  const body = landedCostPayload({ ...fields, currency });
+  delete body.document_number;
+  const updated = await apiFetch<LandedCostDocumentRow>(`${M2_TYPED_PATHS.landedDocs}${pk}/`, {
+    method: "PATCH",
+    body,
+    silent: true,
+  });
+  return getTypedLandedCostDocument(updated.id);
+}
+
+export function previewTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(`${M2_TYPED_PATHS.landedDocs}${id}/preview/`, {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export function postTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(PHASE2_TYPED_API.landedCostPost(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export function adjustTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(PHASE2_TYPED_API.landedCostAdjust(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export type LandedCostComponentPayload = {
+  document?: string;
+  category: string;
+  description?: string;
+  amount: string;
+  currency: string;
+  exchange_rate?: string;
+  supplier?: string;
+  source_document?: string;
+  source_document_number?: string;
+  tax_amount?: string;
+  cost_date?: string | null;
+  allocation_basis?: string;
+  notes?: string;
+};
+
+export function createTypedLandedCostComponent(body: LandedCostComponentPayload): Promise<LandedCostComponentDto> {
+  return apiFetch<LandedCostComponentDto>(M2_TYPED_PATHS.landedComponents, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+}
+
+export function updateTypedLandedCostComponent(
+  id: string,
+  body: Partial<LandedCostComponentPayload>,
+): Promise<LandedCostComponentDto> {
+  return apiFetch<LandedCostComponentDto>(`${M2_TYPED_PATHS.landedComponents}${id}/`, {
+    method: "PATCH",
+    body,
+    silent: true,
+  });
+}
+
+export function deleteTypedLandedCostComponent(id: string): Promise<void> {
+  return apiFetch<void>(`${M2_TYPED_PATHS.landedComponents}${id}/`, {
+    method: "DELETE",
+    silent: true,
+  });
+}
+
 export async function listTypedStockMovements(): Promise<ErpRecord[]> {
   const rows = await listRows<{
     id: string;
@@ -1497,6 +1762,8 @@ export async function listM2TypedEntity(entity: string, query?: TypedListQuery):
       return listTypedInvoices();
     case "qc_inspections":
       return listTypedInspections(query);
+    case "landed_cost_documents":
+      return listTypedLandedCostDocuments(query);
     case "stock_movements":
       return listTypedStockMovements();
     default:
@@ -1520,6 +1787,8 @@ export async function getM2TypedEntity(entity: string, id: string): Promise<ErpR
       return getTypedGrn(id);
     case "qc_inspections":
       return getTypedInspection(id);
+    case "landed_cost_documents":
+      return getTypedLandedCostDocument(id);
     default:
       return null;
   }
@@ -1542,6 +1811,7 @@ const TYPED_WORKFLOW_ACTIONS: Record<string, Partial<Record<DocStatus, (id: stri
     cancelled: PHASE2_TYPED_API.gateCancel,
   },
   grns: { posted: PHASE2_TYPED_API.grnPost },
+  landed_cost_documents: { posted: PHASE2_TYPED_API.landedCostPost },
   purchase_bills: {
     approved: PHASE3_TYPED_API.supplierBillApproveForAp,
     posted: PHASE3_TYPED_API.supplierBillPost,

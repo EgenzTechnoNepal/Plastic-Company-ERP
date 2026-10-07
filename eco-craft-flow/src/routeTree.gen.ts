@@ -77,6 +77,7 @@ import { Route as AppInventoryAbcRouteImport } from './routes/_app.inventory.abc
 import { Route as AppInventoryAdjustmentsRouteImport } from './routes/_app.inventory.adjustments'
 import { Route as AppInventoryAgeingRouteImport } from './routes/_app.inventory.ageing'
 import { Route as AppInventoryAlertsRouteImport } from './routes/_app.inventory.alerts'
+import { Route as AppInventoryLandedCostRouteImport } from './routes/_app.inventory.landed-cost'
 import { Route as AppInventoryLedgerRouteImport } from './routes/_app.inventory.ledger'
 import { Route as AppInventoryMovementsRouteImport } from './routes/_app.inventory.movements'
 import { Route as AppInventoryPlanningRouteImport } from './routes/_app.inventory.planning'
@@ -535,6 +536,11 @@ const AppInventoryAgeingRoute = AppInventoryAgeingRouteImport.update({
 const AppInventoryAlertsRoute = AppInventoryAlertsRouteImport.update({
   id: '/alerts',
   path: '/alerts',
+  getParentRoute: () => AppInventoryRoute,
+} as any)
+const AppInventoryLandedCostRoute = AppInventoryLandedCostRouteImport.update({
+  id: '/landed-cost',
+  path: '/landed-cost',
   getParentRoute: () => AppInventoryRoute,
 } as any)
 const AppInventoryLedgerRoute = AppInventoryLedgerRouteImport.update({
@@ -1216,6 +1222,7 @@ export interface FileRoutesByFullPath {
   '/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/inventory/ageing': typeof AppInventoryAgeingRoute
   '/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
@@ -1390,6 +1397,7 @@ export interface FileRoutesByTo {
   '/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/inventory/ageing': typeof AppInventoryAgeingRoute
   '/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
@@ -1570,6 +1578,7 @@ export interface FileRoutesById {
   '/_app/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/_app/inventory/ageing': typeof AppInventoryAgeingRoute
   '/_app/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/_app/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/_app/inventory/ledger': typeof AppInventoryLedgerRoute
   '/_app/inventory/movements': typeof AppInventoryMovementsRoute
   '/_app/inventory/planning': typeof AppInventoryPlanningRoute
@@ -1759,6 +1768,7 @@ export interface FileRouteTypes {
     | '/inventory/adjustments'
     | '/inventory/ageing'
     | '/inventory/alerts'
+    | '/inventory/landed-cost'
     | '/inventory/ledger'
     | '/inventory/movements'
     | '/inventory/planning'
@@ -1933,6 +1943,7 @@ export interface FileRouteTypes {
     | '/inventory/adjustments'
     | '/inventory/ageing'
     | '/inventory/alerts'
+    | '/inventory/landed-cost'
     | '/inventory/ledger'
     | '/inventory/movements'
     | '/inventory/planning'
@@ -2112,6 +2123,7 @@ export interface FileRouteTypes {
     | '/_app/inventory/adjustments'
     | '/_app/inventory/ageing'
     | '/_app/inventory/alerts'
+    | '/_app/inventory/landed-cost'
     | '/_app/inventory/ledger'
     | '/_app/inventory/movements'
     | '/_app/inventory/planning'
@@ -2722,6 +2734,13 @@ declare module '@tanstack/react-router' {
       path: '/alerts'
       fullPath: '/inventory/alerts'
       preLoaderRoute: typeof AppInventoryAlertsRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/landed-cost': {
+      id: '/_app/inventory/landed-cost'
+      path: '/landed-cost'
+      fullPath: '/inventory/landed-cost'
+      preLoaderRoute: typeof AppInventoryLandedCostRouteImport
       parentRoute: typeof AppInventoryRoute
     }
     '/_app/inventory/ledger': {
@@ -3755,6 +3774,7 @@ interface AppInventoryRouteChildren {
   AppInventoryAdjustmentsRoute: typeof AppInventoryAdjustmentsRoute
   AppInventoryAgeingRoute: typeof AppInventoryAgeingRoute
   AppInventoryAlertsRoute: typeof AppInventoryAlertsRoute
+  AppInventoryLandedCostRoute: typeof AppInventoryLandedCostRoute
   AppInventoryLedgerRoute: typeof AppInventoryLedgerRoute
   AppInventoryMovementsRoute: typeof AppInventoryMovementsRoute
   AppInventoryPlanningRoute: typeof AppInventoryPlanningRoute
@@ -3771,6 +3791,7 @@ const AppInventoryRouteChildren: AppInventoryRouteChildren = {
   AppInventoryAdjustmentsRoute: AppInventoryAdjustmentsRoute,
   AppInventoryAgeingRoute: AppInventoryAgeingRoute,
   AppInventoryAlertsRoute: AppInventoryAlertsRoute,
+  AppInventoryLandedCostRoute: AppInventoryLandedCostRoute,
   AppInventoryLedgerRoute: AppInventoryLedgerRoute,
   AppInventoryMovementsRoute: AppInventoryMovementsRoute,
   AppInventoryPlanningRoute: AppInventoryPlanningRoute,

@@ -39,6 +39,7 @@ export const ENTITY_PATHS: EntityPath[] = [
   { module: "purchase", slug: "debit-notes", entity: "debit_notes" },
   { module: "inventory", slug: "products", entity: "products" },
   { module: "inventory", slug: "planning", entity: "warehouse_item_plans" },
+  { module: "inventory", slug: "landed-cost", entity: "landed_cost_documents" },
   { module: "inventory", slug: "movements", entity: "stock_movements" },
   { module: "inventory", slug: "adjustments", entity: "stock_adjustments" },
   { module: "inventory", slug: "alerts", entity: "products" },

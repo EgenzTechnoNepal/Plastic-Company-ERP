@@ -32,7 +32,7 @@ interface EntityListPageProps {
 }
 
 const PROCUREMENT_SEARCH_ENTITIES = new Set(["purchase_orders", "shipments", "gate_entries", "grns"]);
-const SERVER_SEARCH_ENTITIES = new Set([...PROCUREMENT_SEARCH_ENTITIES, "qc_inspections"]);
+const SERVER_SEARCH_ENTITIES = new Set([...PROCUREMENT_SEARCH_ENTITIES, "qc_inspections", "landed_cost_documents"]);
 
 const PROCUREMENT_FILTERS: Record<
   string,
@@ -72,6 +72,9 @@ const PROCUREMENT_FILTERS: Record<
   qc_inspections: [
     { key: "status", placeholder: "All status", options: "status" },
   ],
+  landed_cost_documents: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
 };
 
 const PROCUREMENT_STATUSES: Record<string, string[]> = {
@@ -94,6 +97,7 @@ const PROCUREMENT_STATUSES: Record<string, string[]> = {
   gate_entries: ["DRAFT", "SUBMITTED", "LINKED_TO_GRN", "CANCELLED"],
   grns: ["DRAFT", "POSTED", "CANCELLED"],
   qc_inspections: ["DRAFT", "PASSED", "FAILED"],
+  landed_cost_documents: ["DRAFT", "PREVIEWED", "POSTED", "CANCELLED"],
 };
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {

@@ -539,6 +539,27 @@ export const ENTITIES: EntityDef[] = [
     fields: [f("product", "Product", "ref", { refEntity: "products", required: true }), f("qty", "Quantity", "number"), f("mfgDate", "Manufacture Date", "date"), f("expiry", "Expiry Date", "date"), f("qcStatus", "QC Status", "select", { options: ["Pending", "Passed", "Failed"] }), f("location", "Location"), f("serials", "Serials", "textarea", { colSpan: 2 })],
   },
   {
+    key: "landed_cost_documents", label: "Landed Cost", singular: "Landed Cost Document", module: "inventory", moduleLabel: "Inventory", prefix: "LCD",
+    statuses: ["draft", "previewed", "posted", "cancelled"] as DocStatus[],
+    columns: [
+      { key: "code", label: "Document", primary: true },
+      { key: "fields.reference", label: "Reference" },
+      { key: "fields.lot", label: "Lot" },
+      { key: "fields.currencyCode", label: "Currency" },
+      { key: "fields.purchaseValue", label: "Material Cost", type: "currency", align: "right" },
+      { key: "status", label: "Status", type: "status" },
+    ],
+    fields: [
+      f("documentNumber", "Document Number", "text", { required: true, section: "Header" }),
+      f("reference", "Reference", "text", { section: "Header" }),
+      f("lot", "Inventory Lot", "text", { section: "Source" }),
+      f("currency", "Currency", "text", { required: true, section: "Commercial" }),
+      f("purchaseQuantity", "Purchase Quantity", "number", { required: true, section: "Material Cost" }),
+      f("purchaseUnitCost", "Purchase Unit Cost", "currency", { required: true, section: "Material Cost" }),
+      f("notes", "Notes", "textarea", { section: "Notes", colSpan: 2 }),
+    ],
+  },
+  {
     key: "stock_movements", label: "Stock Movements", singular: "Stock Movement", module: "inventory", moduleLabel: "Inventory", prefix: "SM",
     statuses: ["completed"],
     columns: [{ key: "code", label: "Ref", primary: true }, { key: "date", label: "Date", type: "date" }, { key: "fields.type", label: "Type" }, { key: "fields.product", label: "Product" }, { key: "fields.qty", label: "Qty", type: "number", align: "right" }, { key: "fields.warehouse", label: "Warehouse" }, { key: "fields.reference", label: "Document" }],

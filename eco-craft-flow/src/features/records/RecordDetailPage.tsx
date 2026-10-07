@@ -25,6 +25,7 @@ import { RfqCompare } from "@/features/purchase/RfqCompare";
 import { ThreeWayMatchPanel } from "@/features/purchase/ThreeWayMatchPanel";
 import { OcrPanel } from "@/features/purchase/OcrPanel";
 import { Product360 } from "@/features/inventory/Product360";
+import { LandedCostPanel } from "@/features/inventory/LandedCostPanel";
 import { WarehouseCycleActions } from "@/features/warehouse/CycleActions";
 import { ProductionCycleActions } from "@/features/production/CycleActions";
 import { BomExplosion } from "@/features/production/BomExplosion";
@@ -175,7 +176,7 @@ export function RecordDetailPage() {
   };
 
   const sections = groupFields(def);
-  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit", "qc_inspections"].includes(entity) ? record.id : record.code;
+  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit", "qc_inspections", "landed_cost_documents"].includes(entity) ? record.id : record.code;
 
   return (
     <>
@@ -307,6 +308,7 @@ export function RecordDetailPage() {
             ))}
             {entity === "customers" && <Customer360 customer={record} />}
             {localPanels && entity === "products" && <Product360 product={record} />}
+            {entity === "landed_cost_documents" && <LandedCostPanel record={record} />}
             {entity === "tickets" && <SlaClock ticket={record} />}
             {localPanels && entity === "sales_orders" && <FulfillmentPanel order={record} />}
             {entity === "rfqs" && <RfqCompare rfq={record} />}
