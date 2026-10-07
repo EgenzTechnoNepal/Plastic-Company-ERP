@@ -19,8 +19,10 @@ export type TypedListQuery = {
   supplier?: string;
   purchase_order?: string;
   warehouse?: string;
+  item?: string;
   lot?: string;
   grn?: string;
+  txn_type?: string;
   status?: string;
   is_active?: string | boolean;
   page?: number;
@@ -33,6 +35,7 @@ export const M2_TYPED_PATHS = {
   facilities: `${API_V1}/warehouse/facilities/`,
   storageBins: `${API_V1}/warehouse/storage-bins/`,
   lots: `${API_V1}/inventory/lots/`,
+  receiptLayers: `${API_V1}/inventory/receipt-layers/`,
   landedDocs: `${API_V1}/inventory/landed-cost-documents/`,
   landedComponents: `${API_V1}/inventory/landed-cost-components/`,
   landedAllocations: `${API_V1}/inventory/landed-cost-allocations/`,
@@ -240,6 +243,7 @@ type GoodsReceiptRow = Named & {
 };
 
 type InventoryLotRow = Named & {
+  company?: string;
   lot_number?: string;
   item?: string;
   supplier?: string | null;
@@ -252,10 +256,109 @@ type InventoryLotRow = Named & {
   certificate_coa_reference?: string;
   warehouse?: string | null;
   bin?: string | null;
+  status?: string;
   qc_status?: string;
   uom?: string | null;
   initial_quantity?: string;
   remaining_quantity?: string;
+  currency?: string | null;
+  purchase_unit_cost?: string;
+  landed_unit_cost?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type InventoryReceiptLayerRow = {
+  id: string;
+  company?: string;
+  lot?: string;
+  item?: string;
+  warehouse?: string | null;
+  bin?: string | null;
+  received_at?: string;
+  receipt_sequence?: number;
+  uom?: string | null;
+  initial_quantity?: string;
+  remaining_quantity?: string;
+  reserved_quantity?: string;
+  purchase_unit_cost?: string;
+  landed_unit_cost?: string | null;
+  currency?: string | null;
+  qc_status?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type StockLedgerRow = {
+  id: string;
+  company?: string;
+  item?: string;
+  lot?: string | null;
+  receipt_layer?: string | null;
+  warehouse?: string | null;
+  bin?: string | null;
+  txn_type?: string;
+  quantity_in?: string;
+  quantity_out?: string;
+  uom?: string | null;
+  unit_cost?: string;
+  total_cost?: string;
+  reference_type?: string;
+  reference_id?: string;
+  reason?: string;
+  occurred_at?: string;
+  is_state_event?: boolean;
+  created_at?: string;
+};
+
+type StockReservationRow = {
+  id: string;
+  company?: string;
+  item?: string;
+  lot?: string | null;
+  receipt_layer?: string | null;
+  warehouse?: string | null;
+  quantity?: string;
+  uom?: string | null;
+  reference_type?: string;
+  reference_id?: string;
+  status?: string;
+  notes?: string;
+  allocations?: Array<{ id: string; receipt_layer?: string; lot?: string; quantity?: string }>;
+  created_at?: string;
+};
+
+type PutawayRow = {
+  id: string;
+  company?: string;
+  putaway_number?: string;
+  lot?: string;
+  from_bin?: string | null;
+  to_warehouse?: string;
+  to_bin?: string;
+  quantity?: string;
+  status?: string;
+  posted_at?: string | null;
+  notes?: string;
+  created_at?: string;
+};
+
+type StockTransferRow = {
+  id: string;
+  company?: string;
+  transfer_number?: string;
+  item?: string;
+  lot?: string | null;
+  quantity?: string;
+  uom?: string | null;
+  from_warehouse?: string;
+  from_bin?: string | null;
+  to_warehouse?: string;
+  to_bin?: string;
+  status?: string;
+  posted_at?: string | null;
+  notes?: string;
+  created_at?: string;
 };
 
 type QCInspectionRow = Named & {
@@ -448,26 +551,9 @@ export async function updateTypedSupplier(id: string, partial: Partial<ErpRecord
 }
 
 export async function listTypedProducts(): Promise<ErpRecord[]> {
-  const [items, balanceRows] = await Promise.all([
-    listRows<Named & { item_type?: string; qc_required?: boolean }>(M2_TYPED_PATHS.items),
-    listRows<{ item?: string; item_sku?: string; sku?: string; on_hand?: string; available_to_consume?: string; available?: string; reserved?: string; qc_hold?: string }>(
-      PHASE2_TYPED_API.balances,
-    ).catch(() => []),
-  ]);
-  const balBySku = new Map(
-    balanceRows.map((b) => [
-      String(b.item_sku ?? b.sku ?? ""),
-      {
-        onHand: Number(b.on_hand ?? b.available ?? 0),
-        available: Number(b.available_to_consume ?? b.available ?? 0),
-        reserved: Number(b.reserved ?? 0),
-        qcHold: Number(b.qc_hold ?? 0),
-      },
-    ]),
-  );
+  const items = await listRows<Named & { item_type?: string; qc_required?: boolean }>(M2_TYPED_PATHS.items);
   return items.map((r) => {
     const sku = r.sku ?? r.code ?? r.id;
-    const bal = balBySku.get(sku) ?? { onHand: 0, available: 0, reserved: 0, qcHold: 0 };
     return baseRecord(
       "products",
       r.id,
@@ -478,10 +564,6 @@ export async function listTypedProducts(): Promise<ErpRecord[]> {
         name: r.name,
         type: r.item_type,
         qcRequired: r.qc_required,
-        onHand: bal.onHand || bal.available,
-        available: bal.available,
-        reserved: bal.reserved,
-        qcHold: bal.qcHold,
         typedId: r.id,
       },
       [],
@@ -1442,6 +1524,78 @@ async function getTypedInventoryLot(id: string): Promise<InventoryLotRow | undef
   return apiFetch<InventoryLotRow>(`${M2_TYPED_PATHS.lots}${raw}/`, { silent: true }).catch(() => undefined);
 }
 
+function mapTypedInventoryLot(
+  r: InventoryLotRow,
+  related?: { layers?: InventoryReceiptLayerRow[]; ledger?: StockLedgerRow[]; putaways?: PutawayRow[] },
+): ErpRecord {
+  const fields = {
+    lotNumber: r.lot_number,
+    item: r.item,
+    supplier: r.supplier,
+    supplierLotNumber: r.supplier_lot_number,
+    manufacturingDate: r.manufacturing_date,
+    expiryDate: r.expiry_date,
+    receivedDate: r.received_date,
+    sourceGrnReference: r.source_grn_reference,
+    purchaseReference: r.purchase_reference,
+    certificateCoaReference: r.certificate_coa_reference,
+    warehouse: r.warehouse,
+    bin: r.bin,
+    lotStatus: r.status,
+    qcStatus: r.qc_status,
+    uom: r.uom,
+    initialQuantity: Number(r.initial_quantity ?? 0),
+    remainingQuantity: Number(r.remaining_quantity ?? 0),
+    currency: r.currency,
+    purchaseUnitCost: Number(r.purchase_unit_cost ?? 0),
+    landedUnitCost: r.landed_unit_cost == null ? undefined : Number(r.landed_unit_cost),
+    receiptLayers: related?.layers ?? [],
+    stockLedger: related?.ledger ?? [],
+    putaways: related?.putaways ?? [],
+    typedId: r.id,
+  };
+  return baseRecord(
+    "inventory_lots",
+    r.id,
+    r.lot_number ?? r.id,
+    [r.lot_number, r.item].filter(Boolean).join(" - ") || "Inventory Lot",
+    r.status ?? "RECEIVED",
+    fields,
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedInventoryLots(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<InventoryLotRow>(
+    M2_TYPED_PATHS.lots,
+    cleanListQuery(query, ["company", "item", "supplier", "status", "warehouse", "is_active", "search", "page", "page_size"]),
+  );
+  return rows.map((r) => mapTypedInventoryLot(r));
+}
+
+export async function getTypedInventoryLotRecord(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const lot = await apiFetch<InventoryLotRow>(`${M2_TYPED_PATHS.lots}${raw}/`, { silent: true });
+  const [layers, ledger, putaways] = await Promise.all([
+    listRows<InventoryReceiptLayerRow>(
+      M2_TYPED_PATHS.receiptLayers,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+    listRows<StockLedgerRow>(
+      PHASE2_TYPED_API.stockLedger,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+    listRows<PutawayRow>(
+      PHASE2_TYPED_API.putaways,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+  ]);
+  return mapTypedInventoryLot(lot, { layers, ledger, putaways });
+}
+
 function mapTypedInspection(r: QCInspectionRow, lot?: InventoryLotRow): ErpRecord {
   const record = baseRecord(
     "qc_inspections",
@@ -1696,38 +1850,170 @@ export function deleteTypedLandedCostComponent(id: string): Promise<void> {
   });
 }
 
-export async function listTypedStockMovements(): Promise<ErpRecord[]> {
-  const rows = await listRows<{
-    id: string;
-    txn_type?: string;
-    quantity?: string;
-    item_sku?: string;
-    warehouse_code?: string;
-    reference_type?: string;
-    reference_id?: string;
-    occurred_at?: string;
-    created_at?: string;
-  }>(PHASE2_TYPED_API.stockLedger);
-  return rows.map((r, i) =>
-    baseRecord(
-      "stock_movements",
-      r.id,
-      `LED-${String(i + 1).padStart(4, "0")}`,
-      r.txn_type || "Movement",
-      "posted",
-      {
-        type: r.txn_type,
-        product: r.item_sku,
-        qty: Number(r.quantity ?? 0),
-        warehouse: r.warehouse_code,
-        reference: `${r.reference_type ?? ""} ${r.reference_id ?? ""}`.trim(),
-        typedId: r.id,
-      },
-      [],
-      r.occurred_at || r.created_at,
-      r.created_at,
-    ),
+function referenceLabel(referenceType?: string, referenceId?: string): string {
+  return [referenceType, referenceId].filter(Boolean).join(" ").trim();
+}
+
+function mapTypedStockMovement(r: StockLedgerRow, index = 0): ErpRecord {
+  return baseRecord(
+    "stock_movements",
+    r.id,
+    `LED-${String(index + 1).padStart(4, "0")}`,
+    r.txn_type || "Stock Ledger Entry",
+    "posted",
+    {
+      txnType: r.txn_type,
+      type: r.txn_type,
+      item: r.item,
+      lot: r.lot,
+      receiptLayer: r.receipt_layer,
+      warehouse: r.warehouse,
+      bin: r.bin,
+      quantityIn: Number(r.quantity_in ?? 0),
+      quantityOut: Number(r.quantity_out ?? 0),
+      uom: r.uom,
+      unitCost: Number(r.unit_cost ?? 0),
+      totalCost: Number(r.total_cost ?? 0),
+      referenceType: r.reference_type,
+      referenceId: r.reference_id,
+      reference: referenceLabel(r.reference_type, r.reference_id),
+      reason: r.reason,
+      isStateEvent: Boolean(r.is_state_event),
+      typedId: r.id,
+    },
+    [],
+    r.occurred_at || r.created_at,
+    r.created_at,
   );
+}
+
+export async function listTypedStockMovements(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockLedgerRow>(
+    PHASE2_TYPED_API.stockLedger,
+    cleanListQuery(query, ["company", "item", "lot", "txn_type", "warehouse", "search", "page", "page_size"]),
+  );
+  return rows.map(mapTypedStockMovement);
+}
+
+function mapTypedStockReservation(r: StockReservationRow): ErpRecord {
+  return baseRecord(
+    "stock_reservations",
+    r.id,
+    `RES-${r.id.slice(0, 8)}`,
+    referenceLabel(r.reference_type, r.reference_id) || r.item || "Stock Reservation",
+    r.status ?? "OPEN",
+    {
+      item: r.item,
+      lot: r.lot,
+      receiptLayer: r.receipt_layer,
+      warehouse: r.warehouse,
+      quantity: Number(r.quantity ?? 0),
+      uom: r.uom,
+      referenceType: r.reference_type,
+      referenceId: r.reference_id,
+      reference: referenceLabel(r.reference_type, r.reference_id),
+      notes: r.notes,
+      allocations: r.allocations ?? [],
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.created_at,
+  );
+}
+
+export async function listTypedStockReservations(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockReservationRow>(
+    PHASE2_TYPED_API.reservations,
+    cleanListQuery(query, ["company", "item", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedStockReservation);
+}
+
+export async function getTypedStockReservation(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<StockReservationRow>(`${PHASE2_TYPED_API.reservations}${raw}/`, { silent: true });
+  return mapTypedStockReservation(row);
+}
+
+function mapTypedPutaway(r: PutawayRow): ErpRecord {
+  return baseRecord(
+    "putaways",
+    r.id,
+    r.putaway_number ?? r.id,
+    r.putaway_number ?? "Putaway Order",
+    r.status ?? "DRAFT",
+    {
+      lot: r.lot,
+      fromBin: r.from_bin,
+      toWarehouse: r.to_warehouse,
+      toBin: r.to_bin,
+      quantity: Number(r.quantity ?? 0),
+      postedAt: r.posted_at,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.posted_at ?? r.created_at,
+  );
+}
+
+export async function listTypedPutaways(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<PutawayRow>(
+    PHASE2_TYPED_API.putaways,
+    cleanListQuery(query, ["company", "lot", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedPutaway);
+}
+
+export async function getTypedPutaway(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<PutawayRow>(`${PHASE2_TYPED_API.putaways}${raw}/`, { silent: true });
+  return mapTypedPutaway(row);
+}
+
+function mapTypedStockTransfer(r: StockTransferRow): ErpRecord {
+  return baseRecord(
+    "stock_transfers",
+    r.id,
+    r.transfer_number ?? r.id,
+    r.transfer_number ?? "Stock Transfer",
+    r.status ?? "DRAFT",
+    {
+      item: r.item,
+      lot: r.lot,
+      quantity: Number(r.quantity ?? 0),
+      uom: r.uom,
+      fromWarehouse: r.from_warehouse,
+      fromBin: r.from_bin,
+      toWarehouse: r.to_warehouse,
+      toBin: r.to_bin,
+      postedAt: r.posted_at,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.posted_at ?? r.created_at,
+  );
+}
+
+export async function listTypedStockTransfers(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockTransferRow>(
+    PHASE2_TYPED_API.transfersV2,
+    cleanListQuery(query, ["company", "item", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedStockTransfer);
+}
+
+export async function getTypedStockTransfer(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<StockTransferRow>(`${PHASE2_TYPED_API.transfersV2}${raw}/`, { silent: true });
+  return mapTypedStockTransfer(row);
 }
 
 export async function listM2TypedEntity(entity: string, query?: TypedListQuery): Promise<ErpRecord[] | null> {
@@ -1764,8 +2050,16 @@ export async function listM2TypedEntity(entity: string, query?: TypedListQuery):
       return listTypedInspections(query);
     case "landed_cost_documents":
       return listTypedLandedCostDocuments(query);
+    case "inventory_lots":
+      return listTypedInventoryLots(query);
+    case "stock_reservations":
+      return listTypedStockReservations(query);
     case "stock_movements":
-      return listTypedStockMovements();
+      return listTypedStockMovements(query);
+    case "stock_transfers":
+      return listTypedStockTransfers(query);
+    case "putaways":
+      return listTypedPutaways(query);
     default:
       return null;
   }
@@ -1789,6 +2083,14 @@ export async function getM2TypedEntity(entity: string, id: string): Promise<ErpR
       return getTypedInspection(id);
     case "landed_cost_documents":
       return getTypedLandedCostDocument(id);
+    case "inventory_lots":
+      return getTypedInventoryLotRecord(id);
+    case "stock_reservations":
+      return getTypedStockReservation(id);
+    case "stock_transfers":
+      return getTypedStockTransfer(id);
+    case "putaways":
+      return getTypedPutaway(id);
     default:
       return null;
   }
@@ -1812,6 +2114,8 @@ const TYPED_WORKFLOW_ACTIONS: Record<string, Partial<Record<DocStatus, (id: stri
   },
   grns: { posted: PHASE2_TYPED_API.grnPost },
   landed_cost_documents: { posted: PHASE2_TYPED_API.landedCostPost },
+  stock_transfers: { posted: PHASE2_TYPED_API.transferPost },
+  putaways: { posted: PHASE2_TYPED_API.putawayPost },
   purchase_bills: {
     approved: PHASE3_TYPED_API.supplierBillApproveForAp,
     posted: PHASE3_TYPED_API.supplierBillPost,

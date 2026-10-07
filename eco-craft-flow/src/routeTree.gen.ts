@@ -79,9 +79,11 @@ import { Route as AppInventoryAgeingRouteImport } from './routes/_app.inventory.
 import { Route as AppInventoryAlertsRouteImport } from './routes/_app.inventory.alerts'
 import { Route as AppInventoryLandedCostRouteImport } from './routes/_app.inventory.landed-cost'
 import { Route as AppInventoryLedgerRouteImport } from './routes/_app.inventory.ledger'
+import { Route as AppInventoryLotsRouteImport } from './routes/_app.inventory.lots'
 import { Route as AppInventoryMovementsRouteImport } from './routes/_app.inventory.movements'
 import { Route as AppInventoryPlanningRouteImport } from './routes/_app.inventory.planning'
 import { Route as AppInventoryProductsRouteImport } from './routes/_app.inventory.products'
+import { Route as AppInventoryReservationsRouteImport } from './routes/_app.inventory.reservations'
 import { Route as AppInventorySupplierPricesRouteImport } from './routes/_app.inventory.supplier-prices'
 import { Route as AppInventoryUomRouteImport } from './routes/_app.inventory.uom'
 import { Route as AppProductionIndexRouteImport } from './routes/_app.production.index'
@@ -548,6 +550,11 @@ const AppInventoryLedgerRoute = AppInventoryLedgerRouteImport.update({
   path: '/ledger',
   getParentRoute: () => AppInventoryRoute,
 } as any)
+const AppInventoryLotsRoute = AppInventoryLotsRouteImport.update({
+  id: '/lots',
+  path: '/lots',
+  getParentRoute: () => AppInventoryRoute,
+} as any)
 const AppInventoryMovementsRoute = AppInventoryMovementsRouteImport.update({
   id: '/movements',
   path: '/movements',
@@ -563,6 +570,12 @@ const AppInventoryProductsRoute = AppInventoryProductsRouteImport.update({
   path: '/products',
   getParentRoute: () => AppInventoryRoute,
 } as any)
+const AppInventoryReservationsRoute =
+  AppInventoryReservationsRouteImport.update({
+    id: '/reservations',
+    path: '/reservations',
+    getParentRoute: () => AppInventoryRoute,
+  } as any)
 const AppInventorySupplierPricesRoute =
   AppInventorySupplierPricesRouteImport.update({
     id: '/supplier-prices',
@@ -1224,9 +1237,11 @@ export interface FileRoutesByFullPath {
   '/inventory/alerts': typeof AppInventoryAlertsRoute
   '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/inventory/lots': typeof AppInventoryLotsRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
   '/inventory/products': typeof AppInventoryProductsRoute
+  '/inventory/reservations': typeof AppInventoryReservationsRoute
   '/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
   '/inventory/uom': typeof AppInventoryUomRoute
   '/production/batches': typeof AppProductionBatchesRoute
@@ -1399,9 +1414,11 @@ export interface FileRoutesByTo {
   '/inventory/alerts': typeof AppInventoryAlertsRoute
   '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/inventory/lots': typeof AppInventoryLotsRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
   '/inventory/products': typeof AppInventoryProductsRoute
+  '/inventory/reservations': typeof AppInventoryReservationsRoute
   '/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
   '/inventory/uom': typeof AppInventoryUomRoute
   '/production/batches': typeof AppProductionBatchesRoute
@@ -1580,9 +1597,11 @@ export interface FileRoutesById {
   '/_app/inventory/alerts': typeof AppInventoryAlertsRoute
   '/_app/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/_app/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/_app/inventory/lots': typeof AppInventoryLotsRoute
   '/_app/inventory/movements': typeof AppInventoryMovementsRoute
   '/_app/inventory/planning': typeof AppInventoryPlanningRoute
   '/_app/inventory/products': typeof AppInventoryProductsRoute
+  '/_app/inventory/reservations': typeof AppInventoryReservationsRoute
   '/_app/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
   '/_app/inventory/uom': typeof AppInventoryUomRoute
   '/_app/production/batches': typeof AppProductionBatchesRoute
@@ -1770,9 +1789,11 @@ export interface FileRouteTypes {
     | '/inventory/alerts'
     | '/inventory/landed-cost'
     | '/inventory/ledger'
+    | '/inventory/lots'
     | '/inventory/movements'
     | '/inventory/planning'
     | '/inventory/products'
+    | '/inventory/reservations'
     | '/inventory/supplier-prices'
     | '/inventory/uom'
     | '/production/batches'
@@ -1945,9 +1966,11 @@ export interface FileRouteTypes {
     | '/inventory/alerts'
     | '/inventory/landed-cost'
     | '/inventory/ledger'
+    | '/inventory/lots'
     | '/inventory/movements'
     | '/inventory/planning'
     | '/inventory/products'
+    | '/inventory/reservations'
     | '/inventory/supplier-prices'
     | '/inventory/uom'
     | '/production/batches'
@@ -2125,9 +2148,11 @@ export interface FileRouteTypes {
     | '/_app/inventory/alerts'
     | '/_app/inventory/landed-cost'
     | '/_app/inventory/ledger'
+    | '/_app/inventory/lots'
     | '/_app/inventory/movements'
     | '/_app/inventory/planning'
     | '/_app/inventory/products'
+    | '/_app/inventory/reservations'
     | '/_app/inventory/supplier-prices'
     | '/_app/inventory/uom'
     | '/_app/production/batches'
@@ -2750,6 +2775,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInventoryLedgerRouteImport
       parentRoute: typeof AppInventoryRoute
     }
+    '/_app/inventory/lots': {
+      id: '/_app/inventory/lots'
+      path: '/lots'
+      fullPath: '/inventory/lots'
+      preLoaderRoute: typeof AppInventoryLotsRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
     '/_app/inventory/movements': {
       id: '/_app/inventory/movements'
       path: '/movements'
@@ -2769,6 +2801,13 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/inventory/products'
       preLoaderRoute: typeof AppInventoryProductsRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/reservations': {
+      id: '/_app/inventory/reservations'
+      path: '/reservations'
+      fullPath: '/inventory/reservations'
+      preLoaderRoute: typeof AppInventoryReservationsRouteImport
       parentRoute: typeof AppInventoryRoute
     }
     '/_app/inventory/supplier-prices': {
@@ -3776,9 +3815,11 @@ interface AppInventoryRouteChildren {
   AppInventoryAlertsRoute: typeof AppInventoryAlertsRoute
   AppInventoryLandedCostRoute: typeof AppInventoryLandedCostRoute
   AppInventoryLedgerRoute: typeof AppInventoryLedgerRoute
+  AppInventoryLotsRoute: typeof AppInventoryLotsRoute
   AppInventoryMovementsRoute: typeof AppInventoryMovementsRoute
   AppInventoryPlanningRoute: typeof AppInventoryPlanningRoute
   AppInventoryProductsRoute: typeof AppInventoryProductsRoute
+  AppInventoryReservationsRoute: typeof AppInventoryReservationsRoute
   AppInventorySupplierPricesRoute: typeof AppInventorySupplierPricesRoute
   AppInventoryUomRoute: typeof AppInventoryUomRoute
   AppInventoryIndexRoute: typeof AppInventoryIndexRoute
@@ -3793,9 +3834,11 @@ const AppInventoryRouteChildren: AppInventoryRouteChildren = {
   AppInventoryAlertsRoute: AppInventoryAlertsRoute,
   AppInventoryLandedCostRoute: AppInventoryLandedCostRoute,
   AppInventoryLedgerRoute: AppInventoryLedgerRoute,
+  AppInventoryLotsRoute: AppInventoryLotsRoute,
   AppInventoryMovementsRoute: AppInventoryMovementsRoute,
   AppInventoryPlanningRoute: AppInventoryPlanningRoute,
   AppInventoryProductsRoute: AppInventoryProductsRoute,
+  AppInventoryReservationsRoute: AppInventoryReservationsRoute,
   AppInventorySupplierPricesRoute: AppInventorySupplierPricesRoute,
   AppInventoryUomRoute: AppInventoryUomRoute,
   AppInventoryIndexRoute: AppInventoryIndexRoute,

@@ -26,6 +26,7 @@ import { ThreeWayMatchPanel } from "@/features/purchase/ThreeWayMatchPanel";
 import { OcrPanel } from "@/features/purchase/OcrPanel";
 import { Product360 } from "@/features/inventory/Product360";
 import { LandedCostPanel } from "@/features/inventory/LandedCostPanel";
+import { InventoryLotPanel } from "@/features/inventory/InventoryLotPanel";
 import { WarehouseCycleActions } from "@/features/warehouse/CycleActions";
 import { ProductionCycleActions } from "@/features/production/CycleActions";
 import { BomExplosion } from "@/features/production/BomExplosion";
@@ -309,6 +310,7 @@ export function RecordDetailPage() {
             {entity === "customers" && <Customer360 customer={record} />}
             {localPanels && entity === "products" && <Product360 product={record} />}
             {entity === "landed_cost_documents" && <LandedCostPanel record={record} />}
+            {entity === "inventory_lots" && <InventoryLotPanel record={record} />}
             {entity === "tickets" && <SlaClock ticket={record} />}
             {localPanels && entity === "sales_orders" && <FulfillmentPanel order={record} />}
             {entity === "rfqs" && <RfqCompare rfq={record} />}

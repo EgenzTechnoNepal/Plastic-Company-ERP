@@ -18,7 +18,11 @@ export const M2_DEMO_TYPED_ENTITIES = new Set([
   "invoices",
   "qc_inspections",
   "landed_cost_documents",
+  "inventory_lots",
+  "stock_reservations",
   "stock_movements",
+  "stock_transfers",
+  "putaways",
   "customers",
   "contacts",
   "activities",
@@ -33,6 +37,10 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "grns",
   "qc_inspections",
   "landed_cost_documents",
+  "inventory_lots",
+  "stock_reservations",
+  "stock_transfers",
+  "putaways",
 ]);
 
 export function isTypedEntity(entity: string): boolean {

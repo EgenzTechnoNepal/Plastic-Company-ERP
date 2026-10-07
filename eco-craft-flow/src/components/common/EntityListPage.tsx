@@ -32,14 +32,20 @@ interface EntityListPageProps {
 }
 
 const PROCUREMENT_SEARCH_ENTITIES = new Set(["purchase_orders", "shipments", "gate_entries", "grns"]);
-const SERVER_SEARCH_ENTITIES = new Set([...PROCUREMENT_SEARCH_ENTITIES, "qc_inspections", "landed_cost_documents"]);
+const SERVER_SEARCH_ENTITIES = new Set([
+  ...PROCUREMENT_SEARCH_ENTITIES,
+  "qc_inspections",
+  "landed_cost_documents",
+  "inventory_lots",
+  "stock_movements",
+]);
 
 const PROCUREMENT_FILTERS: Record<
   string,
   Array<{
     key: keyof TypedListQuery | "active";
     placeholder: string;
-    options: "status" | "supplier" | "purchase_order" | "warehouse" | "active";
+    options: "status" | "supplier" | "purchase_order" | "warehouse" | "active" | "txn_type";
   }>
 > = {
   purchase_orders: [
@@ -75,6 +81,24 @@ const PROCUREMENT_FILTERS: Record<
   landed_cost_documents: [
     { key: "status", placeholder: "All status", options: "status" },
   ],
+  inventory_lots: [
+    { key: "status", placeholder: "All lot status", options: "status" },
+    { key: "supplier", placeholder: "All suppliers", options: "supplier" },
+    { key: "warehouse", placeholder: "All warehouses", options: "warehouse" },
+  ],
+  stock_movements: [
+    { key: "txn_type", placeholder: "All transaction types", options: "txn_type" },
+    { key: "warehouse", placeholder: "All warehouses", options: "warehouse" },
+  ],
+  stock_reservations: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
+  stock_transfers: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
+  putaways: [
+    { key: "status", placeholder: "All status", options: "status" },
+  ],
 };
 
 const PROCUREMENT_STATUSES: Record<string, string[]> = {
@@ -98,7 +122,29 @@ const PROCUREMENT_STATUSES: Record<string, string[]> = {
   grns: ["DRAFT", "POSTED", "CANCELLED"],
   qc_inspections: ["DRAFT", "PASSED", "FAILED"],
   landed_cost_documents: ["DRAFT", "PREVIEWED", "POSTED", "CANCELLED"],
+  inventory_lots: ["RECEIVED", "QC_HOLD", "AVAILABLE", "QUARANTINED", "REJECTED", "CONSUMED", "EXPIRED"],
+  stock_reservations: ["OPEN", "RELEASED", "CANCELLED"],
+  stock_transfers: ["DRAFT", "POSTED"],
+  putaways: ["DRAFT", "POSTED"],
 };
+
+const INVENTORY_TXN_TYPES = [
+  "GRN_RECEIPT",
+  "QC_RELEASE",
+  "QC_REJECT",
+  "PUTAWAY",
+  "PUTAWAY_OUT",
+  "PUTAWAY_IN",
+  "TRANSFER_OUT",
+  "TRANSFER_IN",
+  "ADJUSTMENT_IN",
+  "ADJUSTMENT_OUT",
+  "RESERVATION",
+  "RESERVATION_RELEASE",
+  "ISSUE",
+  "ISSUE_RETURN",
+  "LANDED_COST_REVALUE",
+];
 
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -257,6 +303,8 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
             ? purchaseOrders.map((po) => ({ value: po.id, label: `${po.code} - ${po.title}` }))
             : item.options === "warehouse"
               ? warehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.title}` }))
+              : item.options === "txn_type"
+                ? INVENTORY_TXN_TYPES.map((v) => ({ value: v, label: statusLabel(v) }))
               : [
                   { value: "true", label: "Active" },
                   { value: "false", label: "Inactive" },
