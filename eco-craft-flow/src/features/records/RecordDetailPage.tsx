@@ -50,7 +50,7 @@ import { InboundRecordActions } from "@/features/purchase/InboundRecordActions";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
-import { isTypedEntity } from "@/services/api/typedEntities";
+import { isTypedEntity, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { logView, useApprovals, useAudit, useRecord, useRecords, useRecordsStatus } from "@/services/entityService";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
@@ -180,7 +180,7 @@ export function RecordDetailPage() {
   };
 
   const sections = groupFields(def);
-  const detailRef = ["shipments", "proforma_invoices", "letters_of_credit", "qc_inspections", "landed_cost_documents"].includes(entity) ? record.id : record.code;
+  const detailRef = M2_TYPED_DETAIL_ENTITIES.has(entity) ? record.id : record.code;
 
   return (
     <>

@@ -140,15 +140,15 @@ function pathFor(entity: string): string {
 export async function listRecords(entity: string, query?: TypedListQuery): Promise<ErpRecord[]> {
   if (entity === "customers") {
     const { listTypedCustomers } = await import("./crm");
-    return listTypedCustomers();
+    return listTypedCustomers(query);
   }
   if (entity === "contacts") {
     const { listTypedContacts } = await import("./crm");
-    return listTypedContacts();
+    return listTypedContacts(query);
   }
   if (entity === "activities") {
     const { listTypedActivities } = await import("./crm");
-    return listTypedActivities();
+    return listTypedActivities(query);
   }
   const { listM2TypedEntity } = await import("./m2Typed");
   const m2 = await listM2TypedEntity(entity, query);
@@ -161,6 +161,18 @@ export async function listRecords(entity: string, query?: TypedListQuery): Promi
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
+  if (entity === "customers") {
+    const { getTypedCustomer } = await import("./crm");
+    return getTypedCustomer(id);
+  }
+  if (entity === "contacts") {
+    const { getTypedContact } = await import("./crm");
+    return getTypedContact(id);
+  }
+  if (entity === "activities") {
+    const { getTypedActivity } = await import("./crm");
+    return getTypedActivity(id);
+  }
   const { getM2TypedEntity } = await import("./m2Typed");
   const m2 = await getM2TypedEntity(entity, id);
   if (m2) return m2;
@@ -256,6 +268,10 @@ export async function updateRecord(
   if (entity === "contacts") {
     const { updateTypedContact } = await import("./crm");
     return updateTypedContact(id, record);
+  }
+  if (entity === "activities") {
+    const { updateTypedActivity } = await import("./crm");
+    return updateTypedActivity(id, record);
   }
   if (entity === "products") {
     const { updateTypedProduct } = await import("./m2Typed");

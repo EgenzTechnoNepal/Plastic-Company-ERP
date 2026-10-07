@@ -19,6 +19,12 @@ export type TypedListQuery = {
   supplier?: string;
   purchase_order?: string;
   sales_order?: string;
+  customer?: string;
+  contact?: string;
+  activity_type?: string;
+  party_kind?: string;
+  customer_type?: string;
+  quality_status?: string;
   warehouse?: string;
   item?: string;
   lot?: string;
@@ -562,29 +568,58 @@ export async function listTypedCurrencies(): Promise<TypedOption[]> {
   }));
 }
 
-export async function listTypedSuppliers(): Promise<ErpRecord[]> {
-  const rows = await listRows<Named & { country?: string; email?: string; phone?: string; payment_terms?: string }>(M2_TYPED_PATHS.vendors);
-  return rows.map((r) =>
-    baseRecord(
-      "suppliers",
-      r.id,
-      r.code ?? r.id,
-      r.trading_name || r.legal_name || r.code || "Supplier",
-      r.is_active === false ? "inactive" : "active",
-      {
-        name: r.legal_name,
-        displayName: r.trading_name,
-        country: r.country,
-        email: r.email,
-        phone: r.phone,
-        paymentTerms: r.payment_terms,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+type SupplierRow = Named & {
+  country?: string;
+  address?: string;
+  contact_name?: string;
+  email?: string;
+  phone?: string;
+  tax_id?: string;
+  payment_terms?: string;
+  quality_status?: string;
+  quality_rating?: string | null;
+  notes?: string;
+};
+
+function mapTypedSupplier(r: SupplierRow): ErpRecord {
+  return baseRecord(
+    "suppliers",
+    r.id,
+    r.code ?? r.id,
+    r.trading_name || r.legal_name || r.code || "Supplier",
+    r.is_active === false ? "inactive" : "active",
+    {
+      name: r.legal_name,
+      displayName: r.trading_name,
+      country: r.country,
+      address: r.address,
+      contactPerson: r.contact_name,
+      email: r.email,
+      phone: r.phone,
+      pan: r.tax_id,
+      paymentTerms: r.payment_terms,
+      qualityStatus: r.quality_status,
+      qualityRating: r.quality_rating,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
   );
+}
+
+export async function listTypedSuppliers(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<SupplierRow>(
+    M2_TYPED_PATHS.vendors,
+    cleanListQuery(query, ["company", "search", "quality_status", "is_active"]),
+  );
+  return rows.map(mapTypedSupplier);
+}
+
+export async function getTypedSupplier(id: string): Promise<ErpRecord> {
+  const row = await apiFetch<SupplierRow>(`${M2_TYPED_PATHS.vendors}${id}/`, { silent: true });
+  return mapTypedSupplier(row);
 }
 
 function supplierBody(partial: Partial<ErpRecord>, fallbackCode?: string) {
@@ -2339,7 +2374,7 @@ export async function getTypedStockTransfer(id: string): Promise<ErpRecord> {
 export async function listM2TypedEntity(entity: string, query?: TypedListQuery): Promise<ErpRecord[] | null> {
   switch (entity) {
     case "suppliers":
-      return listTypedSuppliers();
+      return listTypedSuppliers(query);
     case "products":
       return listTypedProducts();
     case "warehouses":
@@ -2387,6 +2422,8 @@ export async function listM2TypedEntity(entity: string, query?: TypedListQuery):
 
 export async function getM2TypedEntity(entity: string, id: string): Promise<ErpRecord | null> {
   switch (entity) {
+    case "suppliers":
+      return getTypedSupplier(id);
     case "purchase_orders":
       return getTypedPurchaseOrder(id);
     case "proforma_invoices":

@@ -34,6 +34,10 @@ interface EntityListPageProps {
 const PROCUREMENT_SEARCH_ENTITIES = new Set(["purchase_orders", "shipments", "gate_entries", "grns"]);
 const SERVER_SEARCH_ENTITIES = new Set([
   ...PROCUREMENT_SEARCH_ENTITIES,
+  "suppliers",
+  "customers",
+  "contacts",
+  "activities",
   "qc_inspections",
   "landed_cost_documents",
   "inventory_lots",
@@ -45,9 +49,30 @@ const PROCUREMENT_FILTERS: Record<
   Array<{
     key: keyof TypedListQuery | "active";
     placeholder: string;
-    options: "status" | "supplier" | "purchase_order" | "sales_order" | "warehouse" | "active" | "txn_type";
+    options: "status" | "supplier" | "purchase_order" | "sales_order" | "warehouse" | "active" | "txn_type" | "customer" | "contact" | "activity_type" | "party_kind" | "customer_type" | "quality_status";
   }>
 > = {
+  suppliers: [
+    { key: "quality_status", placeholder: "All quality status", options: "quality_status" },
+    { key: "active", placeholder: "All activity", options: "active" },
+  ],
+  customers: [
+    { key: "customer_type", placeholder: "All customer types", options: "customer_type" },
+    { key: "active", placeholder: "All activity", options: "active" },
+  ],
+  contacts: [
+    { key: "party_kind", placeholder: "All parties", options: "party_kind" },
+    { key: "customer", placeholder: "All customers", options: "customer" },
+    { key: "supplier", placeholder: "All suppliers", options: "supplier" },
+    { key: "active", placeholder: "All activity", options: "active" },
+  ],
+  activities: [
+    { key: "status", placeholder: "All status", options: "status" },
+    { key: "activity_type", placeholder: "All types", options: "activity_type" },
+    { key: "customer", placeholder: "All customers", options: "customer" },
+    { key: "supplier", placeholder: "All suppliers", options: "supplier" },
+    { key: "contact", placeholder: "All contacts", options: "contact" },
+  ],
   purchase_orders: [
     { key: "status", placeholder: "All status", options: "status" },
     { key: "supplier", placeholder: "All suppliers", options: "supplier" },
@@ -139,7 +164,13 @@ const PROCUREMENT_STATUSES: Record<string, string[]> = {
   sales_orders: ["DRAFT", "CONFIRMED", "PARTIALLY_RESERVED", "RESERVED", "PARTIALLY_DISPATCHED", "DISPATCHED", "PARTIALLY_INVOICED", "INVOICED", "COMPLETED", "CANCELLED"],
   deliveries: ["DRAFT", "POSTED", "CANCELLED"],
   invoices: ["DRAFT", "POSTED", "CANCELLED"],
+  activities: ["OPEN", "DONE", "CANCELLED"],
 };
+
+const CRM_ACTIVITY_TYPES = ["NOTE", "CALL", "EMAIL", "MEETING", "TASK"];
+const CRM_PARTY_KINDS = ["CUSTOMER", "SUPPLIER", "OTHER"];
+const CRM_CUSTOMER_TYPES = ["CORPORATE", "RETAIL", "GOVERNMENT", "DEALER", "OTHER"];
+const SUPPLIER_QUALITY_STATUSES = ["pending", "approved", "conditional", "blocked"];
 
 const INVENTORY_TXN_TYPES = [
   "GRN_RECEIPT",
@@ -290,6 +321,8 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
   const purchaseOrders = useRecords("purchase_orders");
   const salesOrders = useRecords("sales_orders");
   const warehouses = useRecords("warehouses");
+  const customers = useRecords("customers");
+  const contacts = useRecords("contacts");
   const apiQuery = useMemo<TypedListQuery>(() => {
     const next: TypedListQuery = {};
     if (SERVER_SEARCH_ENTITIES.has(entity) && debouncedQuery) next.search = debouncedQuery;
@@ -316,11 +349,23 @@ function ProcurementServerListPage({ entity, kpis, filter, exportName }: EntityL
           : item.options === "purchase_order"
             ? purchaseOrders.map((po) => ({ value: po.id, label: `${po.code} - ${po.title}` }))
             : item.options === "sales_order"
-              ? salesOrders.map((so) => ({ value: so.id, label: `${so.code} - ${so.title}` }))
+            ? salesOrders.map((so) => ({ value: so.id, label: `${so.code} - ${so.title}` }))
+            : item.options === "customer"
+              ? customers.map((c) => ({ value: c.id, label: `${c.code} - ${c.title}` }))
+            : item.options === "contact"
+              ? contacts.map((c) => ({ value: c.id, label: `${c.code} - ${c.title}` }))
             : item.options === "warehouse"
               ? warehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.title}` }))
-              : item.options === "txn_type"
+            : item.options === "txn_type"
                 ? INVENTORY_TXN_TYPES.map((v) => ({ value: v, label: statusLabel(v) }))
+            : item.options === "activity_type"
+              ? CRM_ACTIVITY_TYPES.map((v) => ({ value: v, label: statusLabel(v) }))
+            : item.options === "party_kind"
+              ? CRM_PARTY_KINDS.map((v) => ({ value: v, label: statusLabel(v) }))
+            : item.options === "customer_type"
+              ? CRM_CUSTOMER_TYPES.map((v) => ({ value: v, label: statusLabel(v) }))
+            : item.options === "quality_status"
+              ? SUPPLIER_QUALITY_STATUSES.map((v) => ({ value: v, label: statusLabel(v) }))
               : [
                   { value: "true", label: "Active" },
                   { value: "false", label: "Inactive" },

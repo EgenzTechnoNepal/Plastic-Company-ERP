@@ -32,6 +32,7 @@ import { makeLines, newLineId, nextCode, useRecord, useRecords, useRecordsStatus
 import { docTotals } from "@/types/erp";
 import type { LineItem } from "@/types/erp";
 import { ApiError } from "@/services/api/client";
+import { M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { listTypedCurrencies, listTypedIncoterms, listTypedUoms, productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
@@ -864,7 +865,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const isLetterOfCreditForm = entity === "letters_of_credit";
   const isLandedCostForm = entity === "landed_cost_documents";
   const isTypedSalesForm = entity === "sales_orders" || entity === "deliveries" || entity === "invoices";
-  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm || isLandedCostForm || isTypedSalesForm;
+  const detailRouteById = isShipmentForm || isProformaInvoiceForm || isLetterOfCreditForm || isLandedCostForm || isTypedSalesForm || M2_TYPED_DETAIL_ENTITIES.has(entity);
   const query = useMemo(() => new URLSearchParams(search), [search]);
   const sourceSalesOrderId = query.get("sales_order") ?? "";
   const sourceDispatchId = query.get("dispatch_note") ?? query.get("delivery") ?? "";

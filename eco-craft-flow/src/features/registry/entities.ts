@@ -82,10 +82,13 @@ export const ENTITIES: EntityDef[] = [
   {
     key: "contacts", label: "Contacts", singular: "Contact", module: "crm", moduleLabel: "CRM", prefix: "CON",
     statuses: S.master,
-    columns: [{ key: "code", label: "Code", primary: true }, { key: "title", label: "Name" }, { key: "fields.customer", label: "Customer" }, { key: "fields.designation", label: "Designation" }, { key: "fields.phone", label: "Phone" }, { key: "status", label: "Status", type: "status" }],
+    columns: [{ key: "code", label: "Code", primary: true }, { key: "title", label: "Name" }, { key: "fields.customer", label: "Customer" }, { key: "fields.supplier", label: "Supplier" }, { key: "fields.preferredChannel", label: "Preferred" }, { key: "fields.phone", label: "Phone" }, { key: "status", label: "Status", type: "status" }],
     fields: [
-      f("name", "Full Name", "text", { required: true }), f("customer", "Customer", "ref", { refEntity: "customers", required: true }),
-      f("designation", "Designation"), f("phone", "Phone", "phone"), f("email", "Email", "email"),
+      f("name", "Full Name", "text", { required: true }), f("partyKind", "Party", "select", { options: ["CUSTOMER", "SUPPLIER", "OTHER"] }),
+      f("customer", "Customer", "ref", { refEntity: "customers" }), f("supplier", "Supplier", "ref", { refEntity: "suppliers" }),
+      f("designation", "Designation"), f("phone", "Phone", "phone"), f("alternatePhone", "Alternate Phone", "phone"), f("email", "Email", "email"),
+      f("preferredChannel", "Preferred Channel", "select", { options: ["email", "phone", "whatsapp"] }),
+      f("isPrimary", "Primary", "switch"), f("notes", "Notes", "textarea", { colSpan: 2 }),
     ],
   },
   {
@@ -122,12 +125,13 @@ export const ENTITIES: EntityDef[] = [
   {
     key: "activities", label: "Activities", singular: "Activity", module: "crm", moduleLabel: "CRM", prefix: "ACT",
     statuses: ["open", "completed", "cancelled"],
-    columns: [{ key: "code", label: "Code", primary: true }, { key: "title", label: "Subject" }, { key: "fields.type", label: "Type" }, { key: "fields.dueDate", label: "Due", type: "date" }, { key: "fields.owner", label: "Owner" }, { key: "status", label: "Status", type: "status" }],
+    columns: [{ key: "code", label: "Code", primary: true }, { key: "title", label: "Subject" }, { key: "fields.type", label: "Type" }, { key: "fields.customer", label: "Customer" }, { key: "fields.contact", label: "Contact" }, { key: "fields.dueDate", label: "Follow-up", type: "date" }, { key: "status", label: "Status", type: "status" }],
     fields: [
       f("name", "Subject", "text", { required: true }),
-      f("type", "Type", "select", { options: ["Call", "Meeting", "Email", "Visit", "Demo"] }),
-      f("customer", "Customer", "ref", { refEntity: "customers" }), f("owner", "Owner"),
-      f("outcome", "Outcome", "textarea", { colSpan: 2 }), f("nextAction", "Next Action"), f("nextDate", "Next Action Date", "date"),
+      f("type", "Type", "select", { options: ["NOTE", "CALL", "EMAIL", "MEETING", "TASK"] }),
+      f("customer", "Customer", "ref", { refEntity: "customers" }), f("supplier", "Supplier", "ref", { refEntity: "suppliers" }),
+      f("contact", "Contact", "ref", { refEntity: "contacts" }),
+      f("outcome", "Notes", "textarea", { colSpan: 2 }),
       f("dueDate", "Follow-up due", "date"),
     ],
   },
