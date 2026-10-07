@@ -144,6 +144,19 @@ type LetterOfCreditRow = Named & {
   gate_message?: string;
 };
 
+type ImportShipmentRow = Named & {
+  company?: string;
+  shipment_number?: string;
+  supplier?: string;
+  incoterm?: string | null;
+  named_place?: string;
+  purchase_reference?: string;
+  purchase_order?: string | null;
+  etd?: string | null;
+  eta?: string | null;
+  notes?: string;
+};
+
 type GateEntryRow = Named & {
   supplier?: string;
   shipment?: string | null;
@@ -590,11 +603,13 @@ async function resolveTypedDetailId(entity: string, ref: string): Promise<string
         ? await listTypedProformaInvoices()
         : entity === "letters_of_credit"
           ? await listTypedLettersOfCredit()
-          : entity === "gate_entries"
-            ? await listTypedGateEntries()
-            : entity === "grns"
-              ? await listTypedGrns()
-              : [];
+          : entity === "shipments"
+            ? await listTypedShipments()
+            : entity === "gate_entries"
+              ? await listTypedGateEntries()
+              : entity === "grns"
+                ? await listTypedGrns()
+                : [];
   const hit = rows.find((r) => r.id === raw || r.code === raw || String(r.fields?.typedId) === raw);
   if (!hit) throw new Error(`Record "${raw}" not found.`);
   return String(hit.fields?.typedId ?? hit.id);
@@ -822,6 +837,15 @@ async function resolvePiId(ref: unknown): Promise<string | undefined> {
   return String(hit.fields?.typedId ?? hit.id);
 }
 
+export async function listTypedIncoterms(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { code?: string; name?: string }>(PHASE1_TYPED_API.incoterms);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code || r.name || r.id,
+    label: [r.code, r.name].filter(Boolean).join(" - ") || r.id,
+  }));
+}
+
 export async function createTypedProformaInvoice(partial: Partial<ErpRecord>): Promise<ErpRecord> {
   const { resolveDefaultCompanyId } = await import("./crm");
   const company = await resolveDefaultCompanyId();
@@ -907,6 +931,92 @@ export async function createTypedLetterOfCredit(partial: Partial<ErpRecord>): Pr
     created.created_at,
     created.updated_at,
   );
+}
+
+function mapTypedShipment(r: ImportShipmentRow): ErpRecord {
+  const record = baseRecord(
+    "shipments",
+    r.id,
+    r.shipment_number ?? r.document_number ?? r.id,
+    r.shipment_number || r.purchase_reference || "Shipment",
+    r.is_active === false ? "inactive" : "active",
+    {
+      company: r.company,
+      supplier: r.supplier,
+      incoterm: r.incoterm,
+      namedPlace: r.named_place,
+      purchaseReference: r.purchase_reference,
+      purchaseOrder: r.purchase_order,
+      etd: r.etd,
+      eta: r.eta,
+      notes: r.notes,
+      isActive: r.is_active !== false,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+  return {
+    ...record,
+    links: [
+      ...(r.purchase_order ? [{ entity: "purchase_orders", id: r.purchase_order }] : []),
+      ...(r.supplier ? [{ entity: "suppliers", id: r.supplier }] : []),
+    ],
+  };
+}
+
+export async function listTypedShipments(): Promise<ErpRecord[]> {
+  const rows = await listRows<ImportShipmentRow>(PHASE2_TYPED_API.importShipments);
+  return rows.map(mapTypedShipment);
+}
+
+export async function getTypedShipment(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("shipments", id);
+  const row = await apiFetch<ImportShipmentRow>(`${PHASE2_TYPED_API.importShipments}${pk}/`, { silent: true });
+  return mapTypedShipment(row);
+}
+
+function shipmentPayload(fields: Record<string, unknown>, company?: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    shipment_number: String(fields.shipmentNumber ?? fields.shipment_number ?? "").trim(),
+    supplier: String(fields.supplier ?? "").trim(),
+    named_place: String(fields.namedPlace ?? fields.named_place ?? ""),
+    purchase_reference: String(fields.purchaseReference ?? fields.purchase_reference ?? ""),
+    notes: String(fields.notes ?? ""),
+    is_active: fields.isActive ?? fields.is_active ?? true,
+  };
+  if (company) body.company = company;
+  if (fields.incoterm) body.incoterm = fields.incoterm;
+  if (fields.purchaseOrder) body.purchase_order = fields.purchaseOrder;
+  if (fields.etd) body.etd = fields.etd;
+  if (fields.eta) body.eta = fields.eta;
+  return body;
+}
+
+export async function createTypedShipment(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const body = shipmentPayload(fields, company);
+  if (!body.shipment_number) body.shipment_number = partial.code;
+  const created = await apiFetch<ImportShipmentRow>(PHASE2_TYPED_API.importShipments, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+  return mapTypedShipment(created);
+}
+
+export async function updateTypedShipment(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("shipments", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<ImportShipmentRow>(`${PHASE2_TYPED_API.importShipments}${pk}/`, {
+    method: "PATCH",
+    body: shipmentPayload(fields),
+    silent: true,
+  });
+  return mapTypedShipment(updated);
 }
 
 function mapTypedGateEntry(r: GateEntryRow): ErpRecord {
@@ -1223,6 +1333,8 @@ export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | n
       return listTypedProformaInvoices();
     case "letters_of_credit":
       return listTypedLettersOfCredit();
+    case "shipments":
+      return listTypedShipments();
     case "gate_entries":
       return listTypedGateEntries();
     case "grns":
@@ -1252,6 +1364,8 @@ export async function getM2TypedEntity(entity: string, id: string): Promise<ErpR
       return getTypedProformaInvoice(id);
     case "letters_of_credit":
       return getTypedLetterOfCredit(id);
+    case "shipments":
+      return getTypedShipment(id);
     case "gate_entries":
       return getTypedGateEntry(id);
     case "grns":

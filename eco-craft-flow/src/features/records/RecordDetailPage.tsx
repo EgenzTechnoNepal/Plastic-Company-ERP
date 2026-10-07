@@ -144,6 +144,7 @@ export function RecordDetailPage() {
   };
 
   const sections = groupFields(def);
+  const detailRef = entity === "shipments" ? record.id : record.code;
 
   return (
     <>
@@ -175,7 +176,7 @@ export function RecordDetailPage() {
                 {actions.includes("edit") && !inboundPoId && (
                   <PermissionGuard action="edit" module={module}>
                     <Button size="sm" variant="outline" className="gap-1.5" asChild>
-                      <Link to={recordEditPath(entity, record.code) as never}>
+                      <Link to={recordEditPath(entity, detailRef) as never}>
                         <Pencil className="h-4 w-4" /> Edit
                       </Link>
                     </Button>

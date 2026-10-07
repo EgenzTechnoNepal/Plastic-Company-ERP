@@ -25,6 +25,7 @@ export const RECORD_PATHS: Record<string, string> = {
   purchase_orders: "/purchase/orders/",
   proforma_invoices: "/purchase/proforma-invoices/",
   letters_of_credit: "/purchase/letters-of-credit/",
+  shipments: "/purchase/import-shipments/",
   gate_entries: "/purchase/gate-entries/",
   grns: "/purchase/receipts/",
   purchase_bills: "/purchase/bills/",
@@ -210,6 +211,10 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedLetterOfCredit } = await import("./m2Typed");
     return createTypedLetterOfCredit(record);
   }
+  if (entity === "shipments") {
+    const { createTypedShipment } = await import("./m2Typed");
+    return createTypedShipment(record);
+  }
   if (isTypedEntity(entity)) throw typedUnavailable(entity, "Creating records");
   const row = await apiFetch<RecordDto>(pathFor(entity), {
     method: "POST",
@@ -239,6 +244,10 @@ export async function updateRecord(
   if (entity === "suppliers") {
     const { updateTypedSupplier } = await import("./m2Typed");
     return updateTypedSupplier(id, record);
+  }
+  if (entity === "shipments") {
+    const { updateTypedShipment } = await import("./m2Typed");
+    return updateTypedShipment(id, record);
   }
   if (entity === "warehouses") {
     const { updateTypedWarehouse } = await import("./m2Typed");

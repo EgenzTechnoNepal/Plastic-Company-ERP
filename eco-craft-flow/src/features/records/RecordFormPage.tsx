@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { EmptyState } from "@/components/common/EmptyState";
 import { PermissionGuard, fieldAccess } from "@/lib/permissions";
 import { useAuthStore, isLiveSession } from "@/store/auth";
@@ -27,11 +28,11 @@ import { UnsavedChangesGuard } from "@/components/records/UnsavedChangesGuard";
 import { EntitySelector, WarehouseSelector } from "@/components/records/EntitySelector";
 import { isLocked } from "@/features/records/workflow";
 import { getService } from "@/services/catalog";
-import { makeLines, newLineId, nextCode, useRecord, useRecords } from "@/services/entityService";
+import { makeLines, newLineId, nextCode, useRecord, useRecords, useRecordsStatus } from "@/services/entityService";
 import { docTotals } from "@/types/erp";
 import type { LineItem } from "@/types/erp";
 import { ApiError } from "@/services/api/client";
-import { listTypedCurrencies, listTypedUoms, productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
+import { listTypedCurrencies, listTypedIncoterms, listTypedUoms, productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -249,6 +250,136 @@ function PurchaseOrderLineEditor({
   );
 }
 
+function validateShipment(fields: Record<string, unknown>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!String(fields.shipmentNumber ?? "").trim()) errors.shipmentNumber = "Shipment number is required.";
+  if (!String(fields.supplier ?? "").trim()) errors.supplier = "Supplier is required.";
+  return errors;
+}
+
+function ShipmentFields({
+  fields,
+  onChange,
+  errors,
+  disabled,
+}: {
+  fields: Record<string, unknown>;
+  onChange: (key: string, value: unknown) => void;
+  errors: Record<string, string>;
+  disabled?: boolean;
+}) {
+  const suppliers = useRecords("suppliers");
+  const purchaseOrders = useRecords("purchase_orders");
+  const incoterms = useQuery({ queryKey: ["typed-options", "incoterms"], queryFn: listTypedIncoterms, staleTime: 5 * 60_000 });
+  const selectedPo = purchaseOrders.find((po) => po.id === fields.purchaseOrder || po.code === fields.purchaseOrder);
+
+  const setPurchaseOrder = (value: string) => {
+    onChange("purchaseOrder", value);
+    const po = purchaseOrders.find((row) => row.id === value);
+    if (po?.fields.supplier) onChange("supplier", po.fields.supplier);
+    if (po?.code) onChange("purchaseReference", po.code);
+  };
+
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Shipment</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <FormSection title="Shipment">
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-number">Shipment number<span className="ml-0.5 text-destructive">*</span></Label>
+            <Input id="shipment-number" value={String(fields.shipmentNumber ?? "")} onChange={(e) => onChange("shipmentNumber", e.target.value)} disabled={disabled} />
+            {(errors.shipmentNumber || errors.shipment_number) && <p className="text-xs font-medium text-destructive">{errors.shipmentNumber ?? errors.shipment_number}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-po">Purchase Order</Label>
+            <Select value={String(fields.purchaseOrder ?? "") || undefined} onValueChange={setPurchaseOrder} disabled={disabled}>
+              <SelectTrigger id="shipment-po">
+                <SelectValue placeholder="Select PO..." />
+              </SelectTrigger>
+              <SelectContent>
+                {purchaseOrders.map((po) => (
+                  <SelectItem key={po.id} value={po.id}>
+                    {po.code} - {po.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.purchase_order && <p className="text-xs font-medium text-destructive">{errors.purchase_order}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-supplier">Supplier<span className="ml-0.5 text-destructive">*</span></Label>
+            <Select value={String(fields.supplier ?? "") || undefined} onValueChange={(v) => onChange("supplier", v)} disabled={disabled}>
+              <SelectTrigger id="shipment-supplier">
+                <SelectValue placeholder="Select supplier..." />
+              </SelectTrigger>
+              <SelectContent>
+                {suppliers.map((supplier) => (
+                  <SelectItem key={supplier.id} value={supplier.id}>
+                    {supplier.code} - {supplier.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedPo?.fields.supplierName && (
+              <p className="text-xs text-muted-foreground">PO supplier: {String(selectedPo.fields.supplierName)}</p>
+            )}
+            {(errors.supplier || errors.supplier_id) && <p className="text-xs font-medium text-destructive">{errors.supplier ?? errors.supplier_id}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-ref">Purchase reference</Label>
+            <Input id="shipment-ref" value={String(fields.purchaseReference ?? "")} onChange={(e) => onChange("purchaseReference", e.target.value)} disabled={disabled} />
+            {errors.purchase_reference && <p className="text-xs font-medium text-destructive">{errors.purchase_reference}</p>}
+          </div>
+        </FormSection>
+        <FormSection title="Logistics">
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-incoterm">Incoterm</Label>
+            <Select value={String(fields.incoterm ?? "") || undefined} onValueChange={(v) => onChange("incoterm", v)} disabled={disabled || incoterms.isLoading}>
+              <SelectTrigger id="shipment-incoterm">
+                <SelectValue placeholder={incoterms.isLoading ? "Loading incoterms..." : "Select incoterm..."} />
+              </SelectTrigger>
+              <SelectContent>
+                {(incoterms.data ?? []).map((term) => (
+                  <SelectItem key={term.id} value={term.id}>
+                    {term.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.incoterm && <p className="text-xs font-medium text-destructive">{errors.incoterm}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-place">Named place</Label>
+            <Input id="shipment-place" value={String(fields.namedPlace ?? "")} onChange={(e) => onChange("namedPlace", e.target.value)} disabled={disabled} />
+            {errors.named_place && <p className="text-xs font-medium text-destructive">{errors.named_place}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-etd">ETD</Label>
+            <Input id="shipment-etd" type="date" value={String(fields.etd ?? "")} onChange={(e) => onChange("etd", e.target.value)} disabled={disabled} />
+            {errors.etd && <p className="text-xs font-medium text-destructive">{errors.etd}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="shipment-eta">ETA</Label>
+            <Input id="shipment-eta" type="date" value={String(fields.eta ?? "")} onChange={(e) => onChange("eta", e.target.value)} disabled={disabled} />
+            {errors.eta && <p className="text-xs font-medium text-destructive">{errors.eta}</p>}
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-border/70 px-3 py-2">
+            <Label htmlFor="shipment-active">Active</Label>
+            <Switch id="shipment-active" checked={fields.isActive !== false} onCheckedChange={(v) => onChange("isActive", v)} disabled={disabled} />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="shipment-notes">Notes</Label>
+            <Textarea id="shipment-notes" rows={3} value={String(fields.notes ?? "")} onChange={(e) => onChange("notes", e.target.value)} disabled={disabled} />
+            {errors.notes && <p className="text-xs font-medium text-destructive">{errors.notes}</p>}
+          </div>
+        </FormSection>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const params = useParams({ strict: false }) as { entity?: string; id?: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -259,9 +390,11 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   const entity = entityKeyFor(module, slug) ?? "";
   const def = getEntity(entity);
   const existing = useRecord(entity, code);
+  const loadStatus = useRecordsStatus(entity, code);
   const navigate = useNavigate();
   const isProductForm = entity === "products";
   const isPurchaseOrderForm = entity === "purchase_orders";
+  const isShipmentForm = entity === "shipments";
 
   const initialFields = useMemo(() => {
     const fields: Record<string, unknown> = {};
@@ -279,9 +412,12 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
       fields.exchangeRate = fields.exchangeRate || 1;
       fields.currency = fields.currency || "NPR";
     }
+    if (isShipmentForm && mode === "new") {
+      fields.isActive = true;
+    }
     return fields;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm]);
+  }, [def?.key, existing?.id, mode, isProductForm, isPurchaseOrderForm, isShipmentForm]);
 
   const [fields, setFields] = useState<Record<string, unknown>>(initialFields);
   const [lines, setLines] = useState<LineItem[]>(() => {
@@ -345,11 +481,14 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
   }
+  if (mode === "edit" && !existing && loadStatus.loading) {
+    return <p className="py-12 text-center text-sm text-muted-foreground">Loading {code}…</p>;
+  }
   if (mode === "edit" && !existing) {
     return (
       <EmptyState
-        title="Record not found"
-        description={`${code} is not in the local store.`}
+        title={loadStatus.error ? "Could not load record" : "Record not found"}
+        description={loadStatus.error ? `${code}: ${loadStatus.error}` : `${code} is not in the local store.`}
         action={
           <Button asChild variant="outline">
             <Link to={listPathFor(entity) as never}>Back to {def.label}</Link>
@@ -410,6 +549,14 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         return;
       }
     }
+    if (isShipmentForm) {
+      const shipmentErrors = validateShipment(fields);
+      if (Object.keys(shipmentErrors).length) {
+        setFieldErrors(shipmentErrors);
+        toast.error("Fix the highlighted Shipment fields.");
+        return;
+      }
+    }
     if (def.lines === "ledger") {
       const debit = lines.reduce((s, l) => s + (l.debit || 0), 0);
       const credit = lines.reduce((s, l) => s + (l.credit || 0), 0);
@@ -445,7 +592,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         });
         toast.success(`${created.code} saved`);
         setDirty(false);
-        navigate({ to: recordPath(entity, created.code) as never });
+        navigate({ to: recordPath(entity, isShipmentForm ? created.id : created.code) as never });
       } else if (existing) {
         const updated = await svc.update(existing.id, {
           title,
@@ -454,7 +601,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
         });
         toast.success(`${updated.code} updated`);
         setDirty(false);
-        navigate({ to: recordPath(entity, updated.code) as never });
+        navigate({ to: recordPath(entity, isShipmentForm ? updated.id : updated.code) as never });
       }
     } catch (err) {
       const nextError = formErrorFrom(err);
@@ -467,7 +614,7 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   };
 
   const back = () => {
-    const to = mode === "edit" && existing ? recordPath(entity, existing.code) : list;
+    const to = mode === "edit" && existing ? recordPath(entity, isShipmentForm ? existing.id : existing.code) : list;
     if (dirty) {
       setPendingTo(to);
       setDiscardOpen(true);
@@ -578,6 +725,8 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
         {isPurchaseOrderForm && mode === "new" ? (
           <PurchaseOrderFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
+        ) : isShipmentForm ? (
+          <ShipmentFields fields={fields} onChange={setField} errors={fieldErrors} disabled={saving} />
         ) : sections.map(([title, sectionFields]) => (
           <Card key={title} className="rounded-2xl border-border/60">
             <CardHeader className="pb-2">

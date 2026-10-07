@@ -9,6 +9,7 @@ export const M2_DEMO_TYPED_ENTITIES = new Set([
   "purchase_orders",
   "proforma_invoices",
   "letters_of_credit",
+  "shipments",
   "gate_entries",
   "grns",
   "purchase_bills",
@@ -26,6 +27,7 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "purchase_orders",
   "proforma_invoices",
   "letters_of_credit",
+  "shipments",
   "gate_entries",
   "grns",
 ]);

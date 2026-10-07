@@ -108,6 +108,7 @@ import { Route as AppPurchaseReceiptsRouteImport } from './routes/_app.purchase.
 import { Route as AppPurchaseRequisitionsRouteImport } from './routes/_app.purchase.requisitions'
 import { Route as AppPurchaseReturnsRouteImport } from './routes/_app.purchase.returns'
 import { Route as AppPurchaseRfqsRouteImport } from './routes/_app.purchase.rfqs'
+import { Route as AppPurchaseShipmentsRouteImport } from './routes/_app.purchase.shipments'
 import { Route as AppPurchaseSuppliersRouteImport } from './routes/_app.purchase.suppliers'
 import { Route as AppQualityControlIndexRouteImport } from './routes/_app.quality-control.index'
 import { Route as AppQualityControlCapaRouteImport } from './routes/_app.quality-control.capa'
@@ -694,6 +695,11 @@ const AppPurchaseRfqsRoute = AppPurchaseRfqsRouteImport.update({
   path: '/rfqs',
   getParentRoute: () => AppPurchaseRoute,
 } as any)
+const AppPurchaseShipmentsRoute = AppPurchaseShipmentsRouteImport.update({
+  id: '/shipments',
+  path: '/shipments',
+  getParentRoute: () => AppPurchaseRoute,
+} as any)
 const AppPurchaseSuppliersRoute = AppPurchaseSuppliersRouteImport.update({
   id: '/suppliers',
   path: '/suppliers',
@@ -1239,6 +1245,7 @@ export interface FileRoutesByFullPath {
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
   '/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/quality-control/capa': typeof AppQualityControlCapaRoute
   '/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1412,6 +1419,7 @@ export interface FileRoutesByTo {
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
   '/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/quality-control/capa': typeof AppQualityControlCapaRoute
   '/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1591,6 +1599,7 @@ export interface FileRoutesById {
   '/_app/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/_app/purchase/returns': typeof AppPurchaseReturnsRoute
   '/_app/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/_app/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/_app/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/_app/quality-control/capa': typeof AppQualityControlCapaRoute
   '/_app/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1779,6 +1788,7 @@ export interface FileRouteTypes {
     | '/purchase/requisitions'
     | '/purchase/returns'
     | '/purchase/rfqs'
+    | '/purchase/shipments'
     | '/purchase/suppliers'
     | '/quality-control/capa'
     | '/quality-control/coa'
@@ -1952,6 +1962,7 @@ export interface FileRouteTypes {
     | '/purchase/requisitions'
     | '/purchase/returns'
     | '/purchase/rfqs'
+    | '/purchase/shipments'
     | '/purchase/suppliers'
     | '/quality-control/capa'
     | '/quality-control/coa'
@@ -2130,6 +2141,7 @@ export interface FileRouteTypes {
     | '/_app/purchase/requisitions'
     | '/_app/purchase/returns'
     | '/_app/purchase/rfqs'
+    | '/_app/purchase/shipments'
     | '/_app/purchase/suppliers'
     | '/_app/quality-control/capa'
     | '/_app/quality-control/coa'
@@ -2927,6 +2939,13 @@ declare module '@tanstack/react-router' {
       path: '/rfqs'
       fullPath: '/purchase/rfqs'
       preLoaderRoute: typeof AppPurchaseRfqsRouteImport
+      parentRoute: typeof AppPurchaseRoute
+    }
+    '/_app/purchase/shipments': {
+      id: '/_app/purchase/shipments'
+      path: '/shipments'
+      fullPath: '/purchase/shipments'
+      preLoaderRoute: typeof AppPurchaseShipmentsRouteImport
       parentRoute: typeof AppPurchaseRoute
     }
     '/_app/purchase/suppliers': {
@@ -3852,6 +3871,7 @@ interface AppPurchaseRouteChildren {
   AppPurchaseRequisitionsRoute: typeof AppPurchaseRequisitionsRoute
   AppPurchaseReturnsRoute: typeof AppPurchaseReturnsRoute
   AppPurchaseRfqsRoute: typeof AppPurchaseRfqsRoute
+  AppPurchaseShipmentsRoute: typeof AppPurchaseShipmentsRoute
   AppPurchaseSuppliersRoute: typeof AppPurchaseSuppliersRoute
   AppPurchaseIndexRoute: typeof AppPurchaseIndexRoute
   AppPurchaseEntityIdRoute: typeof AppPurchaseEntityIdRouteWithChildren
@@ -3871,6 +3891,7 @@ const AppPurchaseRouteChildren: AppPurchaseRouteChildren = {
   AppPurchaseRequisitionsRoute: AppPurchaseRequisitionsRoute,
   AppPurchaseReturnsRoute: AppPurchaseReturnsRoute,
   AppPurchaseRfqsRoute: AppPurchaseRfqsRoute,
+  AppPurchaseShipmentsRoute: AppPurchaseShipmentsRoute,
   AppPurchaseSuppliersRoute: AppPurchaseSuppliersRoute,
   AppPurchaseIndexRoute: AppPurchaseIndexRoute,
   AppPurchaseEntityIdRoute: AppPurchaseEntityIdRouteWithChildren,
