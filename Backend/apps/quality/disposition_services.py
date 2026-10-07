@@ -161,7 +161,7 @@ def dispose_failed_material(
 
     if inspection is not None:
         inspection = (
-            QCInspection.objects.select_for_update()
+            QCInspection.objects.select_for_update(of=("self",))
             .select_related("lot", "lot__item", "lot__warehouse", "lot__supplier", "lot__currency", "item")
             .get(pk=inspection.pk)
         )

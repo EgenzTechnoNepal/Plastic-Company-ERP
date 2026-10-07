@@ -144,7 +144,7 @@ def create_supplier_bill(
 
 @transaction.atomic
 def add_bill_line(*, bill: SupplierBill, item, uom, quantity, unit_price, user=None, **fields) -> SupplierBillLine:
-    bill = SupplierBill.objects.select_for_update().select_related(
+    bill = SupplierBill.objects.select_for_update(of=("self",)).select_related(
         "purchase_order", "grn", "supplier", "company"
     ).get(pk=bill.pk)
     assert_company_allowed(user, bill.company_id)
@@ -205,7 +205,7 @@ def match_supplier_bill(*, bill: SupplierBill, user=None) -> SupplierBill:
     Status: MATCHED | TOLERANCE_MATCHED | MISMATCHED
     """
     bill = (
-        SupplierBill.objects.select_for_update()
+        SupplierBill.objects.select_for_update(of=("self",))
         .select_related(
             "purchase_order",
             "purchase_order__supplier",

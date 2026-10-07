@@ -77,7 +77,7 @@ def _create_ncr_stub(*, inspection: QCInspection, disposition: str, user=None) -
 @transaction.atomic
 def pass_inspection(*, inspection: QCInspection, user=None) -> QCInspection:
     inspection = (
-        QCInspection.objects.select_for_update()
+        QCInspection.objects.select_for_update(of=("self",))
         .select_related("lot", "item", "lot__warehouse")
         .get(pk=inspection.pk)
     )
@@ -140,7 +140,7 @@ def fail_inspection(
     user=None,
 ) -> QCInspection:
     inspection = (
-        QCInspection.objects.select_for_update()
+        QCInspection.objects.select_for_update(of=("self",))
         .select_related("lot", "item", "lot__warehouse")
         .get(pk=inspection.pk)
     )
@@ -221,7 +221,7 @@ def start_reinspect(*, lot, user=None, remarks: str = "") -> QCInspection:
     """
     from apps.inventory.models import InventoryLot
 
-    lot = InventoryLot.objects.select_for_update().select_related("item", "warehouse").get(pk=lot.pk)
+    lot = InventoryLot.objects.select_for_update(of=("self",)).select_related("item", "warehouse").get(pk=lot.pk)
     assert_company_allowed(user, lot.company_id)
     if lot.status != LotStatus.QUARANTINED:
         raise QCError(f"Reinspect requires QUARANTINED lot (current={lot.status}).")

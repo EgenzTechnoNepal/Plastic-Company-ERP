@@ -114,7 +114,7 @@ def create_sales_invoice(
 @transaction.atomic
 def add_invoice_line(*, invoice: SalesInvoice, item, uom, quantity, unit_price, user=None, **fields):
     inv = (
-        SalesInvoice.objects.select_for_update()
+        SalesInvoice.objects.select_for_update(of=("self",))
         .select_related("sales_order", "company")
         .get(pk=invoice.pk)
     )
@@ -204,7 +204,7 @@ def _recompute(inv: SalesInvoice) -> None:
 def post_sales_invoice(*, invoice: SalesInvoice, user=None) -> SalesInvoice:
     """Commercial post only — never creates stock ledger or GL entries."""
     inv = (
-        SalesInvoice.objects.select_for_update()
+        SalesInvoice.objects.select_for_update(of=("self",))
         .select_related("dispatch_note", "sales_order", "customer", "company")
         .prefetch_related("lines__sales_order_line")
         .get(pk=invoice.pk)

@@ -8,10 +8,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Action, Module, Role, RolePermission, User, UserRole
+from apps.audit.models import AuditLog
 from apps.organization.models import Branch, Company
 from apps.workflow.approval_services import (
     ApprovalError,
     approve_request,
+    cancel_request,
     reject_request,
     request_approval,
 )
@@ -104,6 +106,38 @@ class ApprovalServiceTests(TestCase):
         with self.assertRaises(ApprovalError) as ctx:
             approve_request(approval=req, user=editor)
         self.assertEqual(ctx.exception.code, "APPROVAL_FORBIDDEN")
+
+    def test_cancel_by_requester(self):
+        req = request_approval(
+            company=self.company,
+            module_code="crm",
+            target_type="crm.Customer",
+            target_id=self.target_id,
+            user=self.user,
+            document_number="CUST-CANCEL",
+        )
+        cancelled = cancel_request(approval=req, user=self.user, reason="no longer needed")
+        self.assertEqual(cancelled.status, ApprovalStatus.CANCELLED)
+
+    def test_cancel_audited(self):
+        """cancel_request must write an audit log entry (same as approve/reject)."""
+        req = request_approval(
+            company=self.company,
+            module_code="crm",
+            target_type="crm.Customer",
+            target_id=self.target_id,
+            user=self.user,
+            document_number="CUST-CANCEL-AUDIT",
+        )
+        cancel_request(approval=req, user=self.user, reason="test cancel audit")
+        audit = AuditLog.objects.filter(
+            module="crm",
+            model_name="ApprovalRequest",
+            action="cancel",
+            object_id=str(req.id),
+        )
+        self.assertTrue(audit.exists(), "cancel_request must produce an audit log entry")
+        self.assertEqual(audit.first().reason, "test cancel audit")
 
 
 class ApprovalApiTests(APITestCase):

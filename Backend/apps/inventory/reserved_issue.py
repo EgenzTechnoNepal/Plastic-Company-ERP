@@ -189,7 +189,7 @@ def issue_reserved_stock(
                 "receipt_layer__bin",
                 "lot",
             )
-            .select_for_update()
+            .select_for_update(of=("self",))
             .order_by("created_at")
         )
         _assert_reservation_allocation_qty_consistent(reservation, allocations)
@@ -197,7 +197,7 @@ def issue_reserved_stock(
         if not allocations and reservation.receipt_layer_id:
             # Legacy single-layer pointer — same integrity rules, no bypass
             layer = (
-                InventoryReceiptLayer.objects.select_for_update()
+                InventoryReceiptLayer.objects.select_for_update(of=("self",))
                 .select_related("lot", "warehouse", "bin", "item")
                 .get(pk=reservation.receipt_layer_id)
             )
@@ -206,7 +206,7 @@ def issue_reserved_stock(
             slices = []
             for a in allocations:
                 layer = (
-                    InventoryReceiptLayer.objects.select_for_update()
+                    InventoryReceiptLayer.objects.select_for_update(of=("self",))
                     .select_related("lot", "warehouse", "bin", "item")
                     .get(pk=a.receipt_layer_id)
                 )
@@ -262,7 +262,7 @@ def issue_reserved_stock(
 
         # Re-lock and re-validate immediately before write
         layer = (
-            InventoryReceiptLayer.objects.select_for_update()
+            InventoryReceiptLayer.objects.select_for_update(of=("self",))
             .select_related("lot", "warehouse", "bin")
             .get(pk=layer.pk)
         )
