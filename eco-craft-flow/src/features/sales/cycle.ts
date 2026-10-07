@@ -5,6 +5,7 @@ import { num, str } from "@/lib/records";
 import { confirmSalesOrder, setSalesOrderFulfillment } from "@/services/api/phase3";
 import { PHASE2_TYPED_API } from "@/services/api/phase2";
 import { apiFetch } from "@/services/api/client";
+import { isLiveSession } from "@/store/auth";
 import type { ErpRecord, LineItem } from "@/types/erp";
 
 export const DISCOUNT_THRESHOLD_PCT = 10;
@@ -156,6 +157,9 @@ export async function reviseQuotation(qt: ErpRecord): Promise<ErpRecord> {
 }
 
 export async function dispatchQuotation(qt: ErpRecord, channel: "Email" | "WhatsApp" | "SMS"): Promise<ErpRecord> {
+  if (isLiveSession()) {
+    throw new Error(`Quotation ${channel} delivery is not supported by the backend.`);
+  }
   const updated = await getService("quotations").update(qt.id, {
     fields: {
       ...qt.fields,

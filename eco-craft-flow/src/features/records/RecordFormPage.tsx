@@ -318,6 +318,7 @@ function ShipmentFields({
   const purchaseOrders = useRecords("purchase_orders");
   const incoterms = useQuery({ queryKey: ["typed-options", "incoterms"], queryFn: listTypedIncoterms, staleTime: 5 * 60_000 });
   const selectedPo = purchaseOrders.find((po) => po.id === fields.purchaseOrder || po.code === fields.purchaseOrder);
+  const selectedPoSupplier = String(selectedPo?.fields.supplierName ?? "");
 
   const setPurchaseOrder = (value: string) => {
     onChange("purchaseOrder", value);
@@ -368,8 +369,8 @@ function ShipmentFields({
                 ))}
               </SelectContent>
             </Select>
-            {selectedPo?.fields.supplierName && (
-              <p className="text-xs text-muted-foreground">PO supplier: {String(selectedPo.fields.supplierName)}</p>
+            {selectedPoSupplier && (
+              <p className="text-xs text-muted-foreground">PO supplier: {selectedPoSupplier}</p>
             )}
             {(errors.supplier || errors.supplier_id) && <p className="text-xs font-medium text-destructive">{errors.supplier ?? errors.supplier_id}</p>}
           </div>

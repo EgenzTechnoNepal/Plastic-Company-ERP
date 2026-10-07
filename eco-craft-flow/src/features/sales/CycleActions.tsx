@@ -17,6 +17,7 @@ import {
   maxDiscountPct,
   reviseQuotation,
 } from "@/features/sales/cycle";
+import { isLiveSession } from "@/store/auth";
 import type { ErpRecord } from "@/types/erp";
 
 export function CycleActions({ entity, record, module }: { entity: string; record: ErpRecord; module: string }) {
@@ -74,7 +75,11 @@ export function CycleActions({ entity, record, module }: { entity: string; recor
         <Button size="sm" variant="outline" onClick={() => run(() => reviseQuotation(record), "Revision created (original kept)")}>
           New revision
         </Button>
-        {(["Email", "WhatsApp", "SMS"] as const).map((ch) => (
+        {isLiveSession() ? (
+          <span className="self-center text-xs text-muted-foreground">
+            Email, WhatsApp, and SMS delivery are unavailable because the backend has no send action.
+          </span>
+        ) : (["Email", "WhatsApp", "SMS"] as const).map((ch) => (
           <Button
             key={ch}
             size="sm"

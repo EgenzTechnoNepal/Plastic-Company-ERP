@@ -58,7 +58,7 @@ function LegacyAgeingPage() {
 
 export function AgeingPage() {
   const live = useAuthStore((state) =>
-    state.source === "api" && Boolean(state.token) && !state.token.startsWith("mock."),
+    state.source === "api" && state.token !== null && !state.token.startsWith("mock."),
   );
   if (live) {
     return (

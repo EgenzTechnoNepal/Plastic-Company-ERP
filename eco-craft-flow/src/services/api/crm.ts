@@ -144,7 +144,6 @@ export function customerToErp(row: CustomerDto): ErpRecord {
       website: row.website,
       country: row.country,
       notes: row.notes,
-      paymentTerms: row.payment_terms,
       companyId: row.company,
       typedId: row.id,
     },

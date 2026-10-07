@@ -291,8 +291,8 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
   const total = preview?.landed_total;
   const unit = preview?.landed_unit_cost;
   const previewComponents = preview?.components ?? [];
-  const displayComponents = previewComponents.length
-    ? previewComponents.map((component) => ({
+  const displayComponents: CostComponent[] = previewComponents.length
+    ? previewComponents.map((component): CostComponent => ({
         id: component.id,
         category: component.category,
         label: labelFor(component.category),

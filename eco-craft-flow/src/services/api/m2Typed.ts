@@ -2042,7 +2042,7 @@ async function listTypedLandedAllocations(documentId: string): Promise<LandedCos
   return listRows<LandedCostAllocationRow>(
     M2_TYPED_PATHS.landedAllocations,
     { document: documentId, page_size: 200 },
-  ).catch(() => []);
+  );
 }
 
 export async function listTypedLandedCostComponents(documentId: string): Promise<LandedCostComponentDto[]> {
