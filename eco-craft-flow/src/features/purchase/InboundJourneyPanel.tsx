@@ -255,12 +255,12 @@ function GrnStage({ j, run, busy }: { j: InboundJourney; run: ReturnType<typeof 
                     gateId,
                     receivable.map((l) => ({ purchase_order_line: l.id, accepted_quantity: qtys[l.id] ?? "" })),
                   ),
-                "GRN posted — lot created in QC hold",
+                "GRN received and posted by backend — lot created in QC hold",
               )
             }
           >
             {busy === "grn" && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-            Post GRN
+            Receive into GRN
           </Button>
         </div>
       )}

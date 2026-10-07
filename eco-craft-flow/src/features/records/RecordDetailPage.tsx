@@ -42,6 +42,7 @@ import { SupplierScorecard } from "@/features/quality/SupplierScorecard";
 import { LcWorkflowPanel } from "@/features/purchase/LcWorkflowPanel";
 import { LcGateGuardBanner } from "@/features/purchase/LcGateGuardBanner";
 import { InboundJourneyPanel } from "@/features/purchase/InboundJourneyPanel";
+import { InboundRecordActions } from "@/features/purchase/InboundRecordActions";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
@@ -105,7 +106,8 @@ export function RecordDetailPage() {
   }
 
   const svc = getService(entity);
-  const actions = workflowActions(record, def);
+  const liveInboundActions = isLiveSession() && (entity === "gate_entries" || entity === "grns");
+  const actions = liveInboundActions ? [] : workflowActions(record, def);
   // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
   const localPanels = !(isLiveSession() && isTypedEntity(entity));
   const inboundPoId =
@@ -259,6 +261,7 @@ export function RecordDetailPage() {
         main={
           <>
             {inboundPoId && <InboundJourneyPanel purchaseOrderId={inboundPoId} />}
+            {liveInboundActions && <InboundRecordActions entity={entity} record={record} />}
             {!inboundPoId && sections.map(([title, fields]) => (
               <Card key={title} className="rounded-2xl border-border/60">
                 <CardHeader className="pb-2">

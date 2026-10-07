@@ -481,6 +481,19 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
   }
+  if (mode === "new" && isLiveSession() && (entity === "gate_entries" || entity === "grns")) {
+    return (
+      <EmptyState
+        title={`${def.singular} is created from the live inbound flow`}
+        description="Open a receivable Purchase Order and use the Inbound journey so the backend can enforce gate, LC and GRN posting rules."
+        action={
+          <Button asChild variant="outline">
+            <Link to="/purchase/orders">Open Purchase Orders</Link>
+          </Button>
+        }
+      />
+    );
+  }
   if (mode === "edit" && !existing && loadStatus.loading) {
     return <p className="py-12 text-center text-sm text-muted-foreground">Loading {code}…</p>;
   }
