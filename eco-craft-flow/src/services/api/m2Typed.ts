@@ -96,6 +96,65 @@ export async function listTypedSuppliers(): Promise<ErpRecord[]> {
   );
 }
 
+function supplierBody(partial: Partial<ErpRecord>, fallbackCode?: string) {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  return {
+    code: String(partial.code || fallbackCode || "").trim() || undefined,
+    legal_name: String(fields.name || partial.title || "").trim(),
+    trading_name: String(fields.displayName || partial.title || fields.name || "").trim(),
+    country: String(fields.country || ""),
+    contact_name: String(fields.contactPerson || ""),
+    email: String(fields.email || ""),
+    phone: String(fields.phone || ""),
+    tax_id: String(fields.pan || ""),
+    payment_terms: String(fields.paymentTerms || ""),
+    notes: String(fields.notes || ""),
+    is_active: partial.status !== "inactive",
+  };
+}
+
+export async function createTypedSupplier(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const body = { ...supplierBody(partial, partial.code), company };
+  if (!body.legal_name) throw new Error("Supplier name is required.");
+  const created = await apiFetch<Named & { country?: string; email?: string; phone?: string; payment_terms?: string }>(
+    M2_TYPED_PATHS.vendors,
+    { method: "POST", body },
+  );
+  return (await listTypedSuppliers()).find((row) => row.id === created.id) ?? baseRecord(
+    "suppliers",
+    created.id,
+    created.code ?? String(body.code ?? created.id),
+    created.trading_name || created.legal_name || String(body.legal_name),
+    created.is_active === false ? "inactive" : "active",
+    { ...body, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
+  );
+}
+
+export async function updateTypedSupplier(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const body = supplierBody(partial);
+  delete body.code;
+  const updated = await apiFetch<Named>(`${M2_TYPED_PATHS.vendors}${id}/`, {
+    method: "PATCH",
+    body,
+  });
+  return (await listTypedSuppliers()).find((row) => row.id === updated.id) ?? baseRecord(
+    "suppliers",
+    updated.id,
+    updated.code ?? id,
+    updated.trading_name || updated.legal_name || "Supplier",
+    updated.is_active === false ? "inactive" : "active",
+    { ...body, typedId: updated.id },
+    [],
+    updated.created_at,
+    updated.updated_at,
+  );
+}
+
 export async function listTypedProducts(): Promise<ErpRecord[]> {
   const [items, balanceRows] = await Promise.all([
     listRows<Named & { item_type?: string; qc_required?: boolean }>(M2_TYPED_PATHS.items),
@@ -157,6 +216,59 @@ export async function listTypedWarehouses(): Promise<ErpRecord[]> {
   );
 }
 
+function warehouseBody(partial: Partial<ErpRecord>, fallbackCode?: string) {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const name = String(fields.name || partial.title || "").trim();
+  return {
+    code: String(partial.code || fallbackCode || "").trim() || undefined,
+    name,
+    address: String(fields.location || fields.address || ""),
+    is_active: partial.status !== "inactive",
+  };
+}
+
+export async function createTypedWarehouse(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const body = { ...warehouseBody(partial, partial.code), company };
+  if (!body.name) throw new Error("Warehouse name is required.");
+  const created = await apiFetch<Named & { address?: string }>(M2_TYPED_PATHS.facilities, {
+    method: "POST",
+    body,
+  });
+  return baseRecord(
+    "warehouses",
+    created.id,
+    created.code ?? String(body.code ?? created.id),
+    created.name || body.name,
+    created.is_active === false ? "inactive" : "active",
+    { name: created.name || body.name, location: created.address || body.address, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
+  );
+}
+
+export async function updateTypedWarehouse(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const body = warehouseBody(partial);
+  delete body.code;
+  const updated = await apiFetch<Named & { address?: string }>(`${M2_TYPED_PATHS.facilities}${id}/`, {
+    method: "PATCH",
+    body,
+  });
+  return baseRecord(
+    "warehouses",
+    updated.id,
+    updated.code ?? id,
+    updated.name || String(body.name || "Warehouse"),
+    updated.is_active === false ? "inactive" : "active",
+    { name: updated.name || body.name, location: updated.address || body.address, typedId: updated.id },
+    [],
+    updated.created_at,
+    updated.updated_at,
+  );
+}
+
 export async function listTypedBins(): Promise<ErpRecord[]> {
   const rows = await listRows<Named & { warehouse?: string; bin_type?: string; warehouse_code?: string }>(
     M2_TYPED_PATHS.storageBins,
@@ -178,6 +290,45 @@ export async function listTypedBins(): Promise<ErpRecord[]> {
       r.created_at,
       r.updated_at,
     ),
+  );
+}
+
+async function resolveWarehouseId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Warehouse is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedWarehouses();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw);
+  if (!hit) throw new Error(`Warehouse "${raw}" not found.`);
+  return hit.id;
+}
+
+export async function createTypedBin(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const warehouse = await resolveWarehouseId(fields.warehouse);
+  const code = String(fields.name || partial.code || "").trim();
+  if (!code) throw new Error("Bin code is required.");
+  const body = {
+    warehouse,
+    code,
+    name: String(fields.title || ""),
+    bin_type: String(fields.zone || "GENERAL").toUpperCase().replace(/\s+/g, "_"),
+    is_active: partial.status !== "inactive",
+  };
+  const created = await apiFetch<Named & { warehouse?: string; bin_type?: string }>(M2_TYPED_PATHS.storageBins, {
+    method: "POST",
+    body,
+  });
+  return baseRecord(
+    "bins",
+    created.id,
+    created.code ?? code,
+    created.code || code,
+    created.is_active === false ? "inactive" : "active",
+    { name: created.code ?? code, warehouse: created.warehouse ?? warehouse, zone: created.bin_type ?? body.bin_type, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
   );
 }
 
@@ -951,3 +1102,42 @@ export async function createTypedProduct(partial: Partial<ErpRecord>): Promise<E
   );
 }
 
+export async function updateTypedProduct(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const productType = String(fields.type ?? "Raw Material");
+  const map = PRODUCT_TYPE_TO_ITEM[productType] ?? PRODUCT_TYPE_TO_ITEM["Raw Material"];
+  const name = String(fields.name ?? partial.title ?? "").trim();
+  if (!name) throw new Error("Product name is required.");
+  const body: Record<string, unknown> = {
+    name,
+    item_type: map.itemType,
+    category: String(fields.category ?? ""),
+    qc_required: map.qc,
+    is_active: partial.status !== "inactive",
+  };
+  if (fields.reorderLevel !== "" && fields.reorderLevel != null) body.reorder_level = String(fields.reorderLevel);
+  if (fields.safetyStock !== "" && fields.safetyStock != null) body.safety_stock = String(fields.safetyStock);
+  if (fields.moq !== "" && fields.moq != null) body.minimum_order_quantity = String(fields.moq);
+  if (fields.maxStock !== "" && fields.maxStock != null) body.maximum_stock = String(fields.maxStock);
+  if (fields.rate !== "" && fields.rate != null) body.standard_cost = String(fields.rate);
+  const updated = await apiFetch<Named & { item_type?: string; qc_required?: boolean; name?: string; sku?: string }>(
+    `${M2_TYPED_PATHS.items}${id}/`,
+    { method: "PATCH", body },
+  );
+  return baseRecord(
+    "products",
+    updated.id,
+    updated.sku ?? updated.code ?? id,
+    updated.name || name,
+    updated.is_active === false ? "inactive" : "active",
+    {
+      ...fields,
+      name: updated.name || name,
+      type: productType,
+      typedId: updated.id,
+    },
+    [],
+    updated.created_at,
+    updated.updated_at,
+  );
+}

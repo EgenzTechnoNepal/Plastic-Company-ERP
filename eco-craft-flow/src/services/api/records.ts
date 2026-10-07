@@ -183,6 +183,18 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedProduct } = await import("./m2Typed");
     return createTypedProduct(record);
   }
+  if (entity === "suppliers") {
+    const { createTypedSupplier } = await import("./m2Typed");
+    return createTypedSupplier(record);
+  }
+  if (entity === "warehouses") {
+    const { createTypedWarehouse } = await import("./m2Typed");
+    return createTypedWarehouse(record);
+  }
+  if (entity === "bins") {
+    const { createTypedBin } = await import("./m2Typed");
+    return createTypedBin(record);
+  }
   if (entity === "proforma_invoices") {
     const { createTypedProformaInvoice } = await import("./m2Typed");
     return createTypedProformaInvoice(record);
@@ -200,7 +212,11 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
   return toErpRecord(row);
 }
 
-export async function updateRecord(entity: string, id: string, record: Partial<ErpRecord>): Promise<ErpRecord> {
+export async function updateRecord(
+  entity: string,
+  id: string,
+  record: Partial<ErpRecord>,
+): Promise<ErpRecord> {
   if (entity === "customers") {
     const { updateTypedCustomer } = await import("./crm");
     return updateTypedCustomer(id, record);
@@ -208,6 +224,18 @@ export async function updateRecord(entity: string, id: string, record: Partial<E
   if (entity === "contacts") {
     const { updateTypedContact } = await import("./crm");
     return updateTypedContact(id, record);
+  }
+  if (entity === "products") {
+    const { updateTypedProduct } = await import("./m2Typed");
+    return updateTypedProduct(id, record);
+  }
+  if (entity === "suppliers") {
+    const { updateTypedSupplier } = await import("./m2Typed");
+    return updateTypedSupplier(id, record);
+  }
+  if (entity === "warehouses") {
+    const { updateTypedWarehouse } = await import("./m2Typed");
+    return updateTypedWarehouse(id, record);
   }
   if (isTypedEntity(entity)) throw typedUnavailable(entity, "Editing records");
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/`, {
@@ -223,7 +251,12 @@ export async function deleteRecord(entity: string, id: string): Promise<void> {
   await apiFetch(`${pathFor(entity)}${id}/`, { method: "DELETE", silent: true });
 }
 
-export async function recordAction(entity: string, id: string, action: string, body?: Record<string, unknown>): Promise<ErpRecord> {
+export async function recordAction(
+  entity: string,
+  id: string,
+  action: string,
+  body?: Record<string, unknown>,
+): Promise<ErpRecord> {
   if (isTypedEntity(entity)) throw typedUnavailable(entity, `The "${action}" action`);
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/${action}/`, {
     method: "POST",
