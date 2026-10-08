@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { statusLabel, statusTone } from "@/lib/records";
 import { recordPath } from "@/features/registry/paths";
+import { M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import type { StatusEvent } from "@/types/erp";
 
 function fmt(at: string) {
@@ -85,10 +86,11 @@ export function RelatedRecords({
         {links.length === 0 && <p className="text-sm text-muted-foreground">No linked documents.</p>}
         {links.map((l) => {
           const code = l.label ?? l.id.split(":").pop() ?? l.id;
+          const recordRef = M2_TYPED_DETAIL_ENTITIES.has(l.entity) ? l.id : code;
           return (
             <Link
               key={l.id}
-              to={recordPath(l.entity, code) as never}
+              to={recordPath(l.entity, recordRef) as never}
               className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm hover:bg-muted/50"
             >
               <span className="truncate">{l.label ?? l.id}</span>

@@ -21,7 +21,14 @@ import {
   RECORD_PATHS,
   updateRecord,
 } from "@/services/api/records";
-import { M2_DEMO_TYPED_ENTITIES, runTypedWorkflowAction } from "@/services/api/m2Typed";
+import { runTypedWorkflowAction } from "@/services/api/m2Typed";
+import type { TypedListQuery } from "@/services/api/m2Typed";
+import {
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
+  liveDomainEntityUnavailable,
+  M2_DEMO_TYPED_ENTITIES,
+  M2_TYPED_DETAIL_ENTITIES,
+} from "@/services/api/typedEntities";
 import { decideTypedApproval, listTypedApprovals, type ApprovalDto } from "@/services/api/crm";
 import { fetchAuditLogs } from "@/services/api/audit";
 import { invalidateLive } from "@/services/queryClient";
@@ -85,11 +92,17 @@ function liveTyped(entity: string): boolean {
 }
 
 function refreshLive(entity: string) {
-  invalidateLive(["records", entity], ["typed-approvals"], ["audit-logs"], ["dashboard-summary"]);
+  invalidateLive(
+    ["records", entity],
+    ["record", entity],
+    ["typed-approvals"],
+    ["audit-logs"],
+    ["dashboard-summary"],
+  );
 }
 
 async function pendingTypedApproval(recordId: string): Promise<ApprovalDto | undefined> {
-  const rows = await listTypedApprovals("PENDING");
+  const rows = await listTypedApprovals({ status: "PENDING" });
   return rows.find((r) => r.target_id === recordId);
 }
 
@@ -118,7 +131,12 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
         try {
           return await getRecord(entity, id);
         } catch (err) {
-          if (M2_DEMO_TYPED_ENTITIES.has(entity)) throw err;
+          if (
+            M2_DEMO_TYPED_ENTITIES.has(entity) ||
+            LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)
+          ) {
+            throw err;
+          }
           if (!isMissingResource(err)) {
             const local = rows().find((r) => r.id === id || r.code === id);
             if (local) return local;
@@ -469,12 +487,29 @@ export type EntityService = ReturnType<typeof createEntityService>;
 
 /* ---------------- React hooks ---------------- */
 
-function useRecordsQuery(entity: string) {
+function useRecordsQuery(entity: string, enabledOverride = true, query?: TypedListQuery) {
   const live = useAuthStore((s) => s.source === "api");
-  const enabled = live && Boolean(RECORD_PATHS[entity]);
+  const enabled =
+    live &&
+    enabledOverride &&
+    !LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity) &&
+    Boolean(RECORD_PATHS[entity]);
+  const result = useQuery({
+    queryKey: ["records", entity, query ?? {}],
+    queryFn: () => listRecords(entity, query),
+    enabled,
+    staleTime: 15_000,
+    retry: 1,
+  });
+  return { live, enabled, ...result };
+}
+
+function useRecordQuery(entity: string, code: string) {
+  const live = useAuthStore((s) => s.source === "api");
+  const enabled = live && M2_TYPED_DETAIL_ENTITIES.has(entity) && Boolean(RECORD_PATHS[entity]) && Boolean(code);
   const query = useQuery({
-    queryKey: ["records", entity],
-    queryFn: () => listRecords(entity),
+    queryKey: ["record", entity, code],
+    queryFn: () => getRecord(entity, code),
     enabled,
     staleTime: 15_000,
     retry: 1,
@@ -486,9 +521,10 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : "Request failed";
 }
 
-export function useRecords(entity: string): ErpRecord[] {
+export function useRecords(entity: string, query?: TypedListQuery): ErpRecord[] {
   const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
-  const { live, data } = useRecordsQuery(entity);
+  const { live, data } = useRecordsQuery(entity, true, query);
+  if (live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) return EMPTY_RECORDS;
   if (live && M2_DEMO_TYPED_ENTITIES.has(entity)) {
     // Never show localStorage mock stock/commercials while authenticated live.
     return data ?? EMPTY_RECORDS;
@@ -497,16 +533,36 @@ export function useRecords(entity: string): ErpRecord[] {
 }
 
 /** Loading / error state for live server-backed lists (null error when offline or healthy). */
-export function useRecordsStatus(entity: string): { loading: boolean; error: string | null; retry: () => void } {
-  const { enabled, isLoading, error, refetch } = useRecordsQuery(entity);
+export function useRecordsStatus(entity: string, code?: string, query?: TypedListQuery): { loading: boolean; error: string | null; retry: () => void } {
+  const detail = useRecordQuery(entity, code ?? "");
+  const list = useRecordsQuery(entity, !detail.enabled, query);
+  if (list.live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return {
+      loading: false,
+      error: liveDomainEntityUnavailable(entity).message,
+      retry: () => undefined,
+    };
+  }
+  if (detail.enabled) {
+    return {
+      loading: detail.isLoading,
+      error: detail.error ? errorText(detail.error) : null,
+      retry: () => void detail.refetch(),
+    };
+  }
   return {
-    loading: enabled && isLoading,
-    error: enabled && error ? errorText(error) : null,
-    retry: () => void refetch(),
+    loading: list.enabled && list.isLoading,
+    error: list.enabled && list.error ? errorText(list.error) : null,
+    retry: () => void list.refetch(),
   };
 }
 export function useRecord(entity: string, code: string): ErpRecord | undefined {
-  const rows = useRecords(entity);
+  const detail = useRecordQuery(entity, code);
+  const { live, data } = useRecordsQuery(entity, !detail.enabled);
+  const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
+  if (live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) return undefined;
+  if (detail.enabled) return detail.data;
+  const rows = live && data ? data : mock;
   return rows.find((r) => r.code === code || r.id === code);
 }
 export function useAudit(): AuditEvent[] {
@@ -532,7 +588,7 @@ export function useNotifications(): NotificationItem[] {
   const live = useAuthStore((s) => s.source === "api");
   return live ? EMPTY_NOTIFICATIONS : mock;
 }
-const TYPED_TARGET_ENTITY: Record<string, string> = {
+export const TYPED_TARGET_ENTITY: Record<string, string> = {
   "crm.Customer": "customers",
   "procurement.Supplier": "suppliers",
   "procurement.PurchaseOrder": "purchase_orders",
@@ -541,9 +597,9 @@ const TYPED_TARGET_ENTITY: Record<string, string> = {
   "sales.SalesInvoice": "invoices",
 };
 
-const TYPED_APPROVAL_STATUS: Record<string, ApprovalRequest["status"]> = {
+const TYPED_APPROVAL_STATUS: Record<ApprovalDto["status"], ApprovalRequest["status"]> = {
   PENDING: "pending",
-  DRAFT: "pending",
+  DRAFT: "draft",
   APPROVED: "approved",
   REJECTED: "rejected",
   CANCELLED: "cancelled",
@@ -564,7 +620,7 @@ function typedApprovalToRequest(r: ApprovalDto): ApprovalRequest {
     totalLevels: 1,
     dueDate: r.requested_at?.slice(0, 10) ?? "",
     priority: "normal",
-    status: TYPED_APPROVAL_STATUS[r.status] ?? "pending",
+    status: TYPED_APPROVAL_STATUS[r.status],
     approverRole: "manager",
     mode: "sequential",
     createdAt: r.requested_at,

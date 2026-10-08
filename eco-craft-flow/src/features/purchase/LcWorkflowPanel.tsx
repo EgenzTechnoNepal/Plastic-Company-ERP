@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiFetch } from "@/services/api/client";
 import { API_V1 } from "@/services/api/endpoints";
@@ -12,9 +12,11 @@ import {
   lcAiScanDraft,
   lcAiSuggestPreDispatch,
   lcIssueFinal,
+  lcMarkManufacturing,
   lcRunMatch,
   lcScanDraft,
   lcSellerOk,
+  lcStartPreDispatch,
   lcVerifyPreDispatch,
   type LetterOfCreditDto,
 } from "@/services/api/phase3";
@@ -65,12 +67,22 @@ export function LcWorkflowPanel({
   onUpdated?: (next: ErpRecord) => void;
 }) {
   const id = String(record.fields?.typedId ?? record.id);
+  const qc = useQueryClient();
   const geminiConfigured = useGeminiConfigured();
+  const rawStatus = String(record.fields?.serverStatus ?? record.status ?? "").toUpperCase();
+  const canScanDraft = rawStatus === "DRAFT" || rawStatus === "AI_MATCH_FAILED";
+  const canRunMatch = rawStatus === "DRAFT_LC_SCANNED";
+  const canSellerOk = rawStatus === "AI_MATCH_PASSED";
+  const canIssueFinal = rawStatus === "SELLER_APPROVED";
+  const canMarkManufacturing = rawStatus === "FINAL_ISSUED";
+  const canStartPreDispatch = rawStatus === "FINAL_ISSUED" || rawStatus === "MANUFACTURING";
+  const canVerifyPreDispatch = rawStatus === "DOCS_PENDING" || rawStatus === "DOCS_BLOCKED";
+  const workflowComplete = rawStatus === "DOCS_CLEARED" || rawStatus === "CLOSED" || rawStatus === "CANCELLED";
   const [busy, setBusy] = useState(false);
   const [draftAmount, setDraftAmount] = useState(String(record.fields?.draftAmount ?? record.fields?.amount ?? ""));
   const [draftCurrency, setDraftCurrency] = useState(String(record.fields?.draftCurrency ?? record.fields?.currencyCode ?? "USD"));
   const [draftBeneficiary, setDraftBeneficiary] = useState(String(record.fields?.draftBeneficiary ?? ""));
-  const [finalNumber, setFinalNumber] = useState(String(record.fields?.lcNumber ?? ""));
+  const [finalNumber, setFinalNumber] = useState(String(record.fields?.finalLcNumber ?? record.fields?.lcNumber ?? ""));
   const [present, setPresent] = useState<Record<string, boolean>>({
     commercial_invoice: true,
     packing_list: true,
@@ -79,6 +91,17 @@ export function LcWorkflowPanel({
   });
   const draftFileRef = useRef<HTMLInputElement>(null);
   const packetFileRef = useRef<HTMLInputElement>(null);
+
+  const refresh = (next: ErpRecord) => {
+    void qc.invalidateQueries({ queryKey: ["record", "letters_of_credit", id] });
+    void qc.invalidateQueries({ queryKey: ["record", "letters_of_credit", record.code] });
+    void qc.invalidateQueries({ queryKey: ["records", "letters_of_credit"] });
+    void qc.invalidateQueries({ queryKey: ["records", "purchase_orders"] });
+    void qc.invalidateQueries({ queryKey: ["inbound-journey"] });
+    void qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    void qc.invalidateQueries({ queryKey: ["audit-logs"] });
+    onUpdated?.(next);
+  };
 
   const run = async (fn: () => Promise<LetterOfCreditDto>, okMsg: string) => {
     setBusy(true);
@@ -90,7 +113,7 @@ export function LcWorkflowPanel({
       if (ex?.currency != null) setDraftCurrency(String(ex.currency));
       if (ex?.beneficiary != null) setDraftBeneficiary(String(ex.beneficiary));
       toast.success(okMsg);
-      onUpdated?.(next);
+      refresh(next);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -108,7 +131,7 @@ export function LcWorkflowPanel({
       if (ex.currency != null) setDraftCurrency(String(ex.currency));
       if (ex.beneficiary != null) setDraftBeneficiary(String(ex.beneficiary));
       toast.success("Gemini filled Draft LC fields — review then Run match");
-      onUpdated?.(mapDto(dto, record));
+      refresh(mapDto(dto, record));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "AI scan failed");
     } finally {
@@ -153,8 +176,9 @@ export function LcWorkflowPanel({
         {record.fields?.matchSummary ? (
           <p className="text-sm text-muted-foreground">{String(record.fields.matchSummary)}</p>
         ) : null}
+        <p className="text-xs font-medium text-muted-foreground">Backend status: {rawStatus || "UNKNOWN"}</p>
 
-        {geminiConfigured && (
+        {canScanDraft && geminiConfigured && (
           <div className="flex flex-wrap items-center gap-2">
             <input
               ref={draftFileRef}
@@ -170,7 +194,7 @@ export function LcWorkflowPanel({
           </div>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        {canScanDraft && <div className="grid gap-3 sm:grid-cols-3">
           <div className="space-y-1">
             <Label>Draft LC amount</Label>
             <Input value={draftAmount} onChange={(e) => setDraftAmount(e.target.value)} disabled={busy} />
@@ -183,61 +207,80 @@ export function LcWorkflowPanel({
             <Label>Beneficiary</Label>
             <Input value={draftBeneficiary} onChange={(e) => setDraftBeneficiary(e.target.value)} disabled={busy} />
           </div>
-        </div>
+        </div>}
 
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              run(
-                () =>
-                  lcScanDraft(id, {
-                    extracted: {
-                      amount: draftAmount,
-                      currency: draftCurrency,
-                      beneficiary: draftBeneficiary,
-                    },
-                  }),
-                "Draft LC scanned",
-              )
-            }
-          >
-            1. Save Draft extract
-          </Button>
-          <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcRunMatch(id), "Rules-based match finished")}>
-            2. Run match (PO + PI)
-          </Button>
-          <Button
-            size="sm"
-            type="button"
-            variant="secondary"
-            disabled={busy}
-            onClick={() => run(() => lcSellerOk(id, "Yes, it is okay, you can proceed."), "Seller approved draft")}
-          >
-            3. Seller OK
-          </Button>
-          <div className="flex items-center gap-2">
-            <Input
-              className="h-8 w-40"
-              placeholder="Final LC no."
-              value={finalNumber}
-              onChange={(e) => setFinalNumber(e.target.value)}
-              disabled={busy}
-            />
+          {canScanDraft && (
             <Button
               size="sm"
               type="button"
               disabled={busy}
-              onClick={() => run(() => lcIssueFinal(id, finalNumber), "Final LC issued")}
+              onClick={() =>
+                run(
+                  () =>
+                    lcScanDraft(id, {
+                      extracted: {
+                        amount: draftAmount,
+                        currency: draftCurrency,
+                        beneficiary: draftBeneficiary,
+                      },
+                    }),
+                  "Draft LC scanned",
+                )
+              }
             >
-              4. Issue Final LC
+              Save Draft extract
             </Button>
-          </div>
+          )}
+          {canRunMatch && (
+            <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcRunMatch(id), "Rules-based match finished")}>
+              Run match (PO + PI)
+            </Button>
+          )}
+          {canSellerOk && (
+            <Button
+              size="sm"
+              type="button"
+              variant="secondary"
+              disabled={busy}
+              onClick={() => run(() => lcSellerOk(id, "Yes, it is okay, you can proceed."), "Seller approved draft")}
+            >
+              Seller OK
+            </Button>
+          )}
+          {canIssueFinal && (
+            <div className="flex items-center gap-2">
+              <Input
+                className="h-8 w-40"
+                placeholder="Final LC no."
+                value={finalNumber}
+                onChange={(e) => setFinalNumber(e.target.value)}
+                disabled={busy}
+              />
+              <Button
+                size="sm"
+                type="button"
+                disabled={busy}
+                onClick={() => run(() => lcIssueFinal(id, finalNumber), "Final LC issued")}
+              >
+                Issue Final LC
+              </Button>
+            </div>
+          )}
+          {canMarkManufacturing && (
+            <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcMarkManufacturing(id), "Manufacturing marked")}>
+              Mark manufacturing
+            </Button>
+          )}
+          {canStartPreDispatch && (
+            <Button size="sm" type="button" variant="secondary" disabled={busy} onClick={() => run(() => lcStartPreDispatch(id), "Pre-dispatch started")}>
+              Start pre-dispatch
+            </Button>
+          )}
+          {workflowComplete && <p className="text-sm text-muted-foreground">No LC workflow actions are available for this status.</p>}
         </div>
 
-        <div className="space-y-2 border-t border-border/50 pt-3">
+        {canVerifyPreDispatch && <div className="space-y-2 border-t border-border/50 pt-3">
           <p className="text-sm font-medium">Pre-dispatch document packet</p>
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -278,9 +321,9 @@ export function LcWorkflowPanel({
               )
             }
           >
-            5. Verify pre-dispatch (approve)
+            Verify pre-dispatch (approve)
           </Button>
-        </div>
+        </div>}
       </CardContent>
     </Card>
   );

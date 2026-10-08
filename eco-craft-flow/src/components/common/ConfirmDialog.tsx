@@ -22,7 +22,7 @@ interface ConfirmDialogProps {
   /** When set, a reason is required before confirm. */
   requireReason?: boolean;
   reasonLabel?: string;
-  onConfirm: (reason?: string) => void | Promise<void>;
+  onConfirm: (reason?: string) => void | boolean | Promise<void | boolean>;
 }
 
 export function ConfirmDialog({
@@ -73,9 +73,11 @@ export function ConfirmDialog({
             onClick={async () => {
               setBusy(true);
               try {
-                await onConfirm(reason.trim() || undefined);
-                setReason("");
-                onOpenChange(false);
+                const confirmed = await onConfirm(reason.trim() || undefined);
+                if (confirmed !== false) {
+                  setReason("");
+                  onOpenChange(false);
+                }
               } finally {
                 setBusy(false);
               }

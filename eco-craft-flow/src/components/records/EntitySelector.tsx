@@ -1,4 +1,4 @@
-import { useRecords } from "@/services/entityService";
+import { useRecords, useRecordsStatus } from "@/services/entityService";
 import { getEntity } from "@/features/registry/entities";
 import {
   Select,
@@ -19,11 +19,27 @@ interface EntitySelectorProps {
 
 export function EntitySelector({ entity, value, onChange, placeholder, id, disabled }: EntitySelectorProps) {
   const rows = useRecords(entity);
+  const status = useRecordsStatus(entity);
   const def = getEntity(entity);
   return (
-    <Select value={value || undefined} onValueChange={onChange} disabled={disabled}>
+    <div className="space-y-1">
+      {status.error && (
+        <p role="alert" className="text-xs text-destructive">
+          Could not load {def?.label.toLowerCase() ?? entity}: {status.error}{" "}
+          <button type="button" className="underline" onClick={status.retry}>Retry</button>
+        </p>
+      )}
+      <Select value={value || undefined} onValueChange={onChange} disabled={disabled || status.loading || Boolean(status.error)}>
       <SelectTrigger id={id}>
-        <SelectValue placeholder={placeholder ?? `Select ${def?.singular ?? entity}…`} />
+        <SelectValue
+          placeholder={
+            status.loading
+              ? `Loading ${def?.singular ?? entity}…`
+              : status.error
+                ? `${def?.singular ?? entity} unavailable`
+                : placeholder ?? `Select ${def?.singular ?? entity}…`
+          }
+        />
       </SelectTrigger>
       <SelectContent>
         {rows.map((r) => (
@@ -33,7 +49,8 @@ export function EntitySelector({ entity, value, onChange, placeholder, id, disab
           </SelectItem>
         ))}
       </SelectContent>
-    </Select>
+      </Select>
+    </div>
   );
 }
 

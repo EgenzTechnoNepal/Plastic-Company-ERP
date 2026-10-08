@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { recordPath } from "@/features/registry/paths";
+import { M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { npr } from "@/lib/export";
 import { num, statusLabel, statusTone, str } from "@/lib/records";
 import { recordTotal, useRecords } from "@/services/entityService";
@@ -10,8 +11,9 @@ import type { ErpRecord } from "@/types/erp";
 function matchesCustomer(row: ErpRecord, customer: ErpRecord) {
   const code = customer.code;
   const name = customer.title;
+  const id = customer.id;
   return [str(row, "customer"), str(row, "customerName"), row.title].some(
-    (v) => v === code || v === name || v.includes(code),
+    (v) => v === id || v === code || v === name || v.includes(code),
   );
 }
 
@@ -28,7 +30,7 @@ function RelatedTable({ title, rows, entity }: { title: string; rows: ErpRecord[
         {rows.slice(0, 8).map((r) => (
           <Link
             key={r.id}
-            to={recordPath(entity, r.code) as never}
+            to={recordPath(entity, M2_TYPED_DETAIL_ENTITIES.has(entity) ? r.id : r.code) as never}
             className="flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-muted/50"
           >
             <span className="min-w-0 truncate">

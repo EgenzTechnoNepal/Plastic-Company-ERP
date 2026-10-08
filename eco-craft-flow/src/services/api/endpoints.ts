@@ -66,6 +66,7 @@ export const ENDPOINTS: Record<string, ResourceEndpoints> = {
   purchase_requisitions: resource("purchase", "requisitions"),
   rfqs: resource("purchase", "rfqs"),
   purchase_orders: resource("purchase", "orders"),
+  shipments: resource("purchase", "import-shipments"),
   gate_entries: resource("purchase", "gate-entries"),
   grns: resource("purchase", "receipts"),
   purchase_bills: resource("purchase", "bills"),

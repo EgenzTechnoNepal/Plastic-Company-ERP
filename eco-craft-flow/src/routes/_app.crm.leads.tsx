@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Phone, TrendingUp, User } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/common/EmptyState";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { LEAD_STAGES } from "@/constants/masters";
 import { recordPath } from "@/features/registry/paths";
@@ -9,13 +10,24 @@ import { npr } from "@/lib/export";
 import { num, str } from "@/lib/records";
 import { getService } from "@/services/catalog";
 import { useRecords } from "@/services/entityService";
+import { useAuthStore } from "@/store/auth";
 
 export const Route = createFileRoute("/_app/crm/leads")({
   component: LeadsPage,
 });
 
 function LeadsPage() {
+  const live = useAuthStore((s) => s.source === "api");
   const leads = useRecords("leads");
+  if (live) {
+    return (
+      <EmptyState
+        title="Live lead management is unavailable"
+        description="The backend currently exposes leads only through legacy DomainRecord compatibility data. Lead pipeline changes and conversion are disabled in live mode."
+      />
+    );
+  }
+
   const byStage = (stage: string) => leads.filter((l) => str(l, "stage") === stage);
   const pipelineValue = leads
     .filter((l) => str(l, "stage") !== "lost")

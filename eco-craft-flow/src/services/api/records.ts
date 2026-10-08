@@ -1,6 +1,13 @@
 import { apiFetch, apiFetchMeta, ApiError } from "./client";
-import { isTypedEntity, typedUnavailable } from "./typedEntities";
+import {
+  isTypedEntity,
+  liveDomainEntityUnavailable,
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
+  typedUnavailable,
+} from "./typedEntities";
+import type { TypedListQuery } from "./m2Typed";
 import type { DocStatus, ErpRecord, LineItem, StatusEvent } from "@/types/erp";
+import { isLiveSession } from "@/store/auth";
 
 /** Django path (under /api/v1) for each frontend entity key. */
 export const RECORD_PATHS: Record<string, string> = {
@@ -25,6 +32,7 @@ export const RECORD_PATHS: Record<string, string> = {
   purchase_orders: "/purchase/orders/",
   proforma_invoices: "/purchase/proforma-invoices/",
   letters_of_credit: "/purchase/letters-of-credit/",
+  shipments: "/purchase/import-shipments/",
   gate_entries: "/purchase/gate-entries/",
   grns: "/purchase/receipts/",
   purchase_bills: "/purchase/bills/",
@@ -33,12 +41,15 @@ export const RECORD_PATHS: Record<string, string> = {
   vendor_payments: "/purchase/payments/",
   ocr_bills: "/purchase/ocr-bills/",
   products: "/inventory/products/",
+  inventory_lots: "/inventory/lots/",
   batches: "/inventory/batches/",
   stock_movements: "/inventory/movements/",
+  stock_reservations: "/inventory/reservations/",
   stock_adjustments: "/inventory/adjustments/",
   warehouses: "/warehouse/warehouses/",
   bins: "/warehouse/bins/",
   stock_transfers: "/warehouse/transfers/",
+  putaways: "/warehouse/putaway/",
   bin_transfers: "/warehouse/bin-transfers/",
   stock_counts: "/warehouse/counts/",
   quarantine: "/quality/quarantine/",
@@ -127,35 +138,53 @@ export function fromErpRecord(record: Partial<ErpRecord>, entity: string) {
 }
 
 function pathFor(entity: string): string {
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    throw liveDomainEntityUnavailable(entity);
+  }
   const p = RECORD_PATHS[entity];
   if (!p) throw new Error(`No live API path for entity "${entity}"`);
   return p;
 }
 
-export async function listRecords(entity: string): Promise<ErpRecord[]> {
+export async function listRecords(entity: string, query?: TypedListQuery): Promise<ErpRecord[]> {
   if (entity === "customers") {
     const { listTypedCustomers } = await import("./crm");
-    return listTypedCustomers();
+    return listTypedCustomers(query);
   }
   if (entity === "contacts") {
     const { listTypedContacts } = await import("./crm");
-    return listTypedContacts();
+    return listTypedContacts(query);
   }
   if (entity === "activities") {
     const { listTypedActivities } = await import("./crm");
-    return listTypedActivities();
+    return listTypedActivities(query);
   }
   const { listM2TypedEntity } = await import("./m2Typed");
-  const m2 = await listM2TypedEntity(entity);
+  const m2 = await listM2TypedEntity(entity, query);
   if (m2) return m2;
   const { data } = await apiFetchMeta<RecordDto[]>(pathFor(entity), {
-    query: { page_size: 200 },
+    query: query ?? { page_size: 200 },
     silent: true,
   });
   return (Array.isArray(data) ? data : []).map(toErpRecord);
 }
 
 export async function getRecord(entity: string, id: string): Promise<ErpRecord> {
+  if (entity === "customers") {
+    const { getTypedCustomer } = await import("./crm");
+    return getTypedCustomer(id);
+  }
+  if (entity === "contacts") {
+    const { getTypedContact } = await import("./crm");
+    return getTypedContact(id);
+  }
+  if (entity === "activities") {
+    const { getTypedActivity } = await import("./crm");
+    return getTypedActivity(id);
+  }
+  const { getM2TypedEntity } = await import("./m2Typed");
+  const m2 = await getM2TypedEntity(entity, id);
+  if (m2) return m2;
   if (isTypedEntity(entity)) {
     const rows = await listRecords(entity);
     const found = rows.find((r) => r.id === id || r.code === id);
@@ -183,6 +212,22 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
     const { createTypedProduct } = await import("./m2Typed");
     return createTypedProduct(record);
   }
+  if (entity === "suppliers") {
+    const { createTypedSupplier } = await import("./m2Typed");
+    return createTypedSupplier(record);
+  }
+  if (entity === "warehouses") {
+    const { createTypedWarehouse } = await import("./m2Typed");
+    return createTypedWarehouse(record);
+  }
+  if (entity === "bins") {
+    const { createTypedBin } = await import("./m2Typed");
+    return createTypedBin(record);
+  }
+  if (entity === "purchase_orders") {
+    const { createTypedPurchaseOrder } = await import("./m2Typed");
+    return createTypedPurchaseOrder(record);
+  }
   if (entity === "proforma_invoices") {
     const { createTypedProformaInvoice } = await import("./m2Typed");
     return createTypedProformaInvoice(record);
@@ -190,6 +235,26 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
   if (entity === "letters_of_credit") {
     const { createTypedLetterOfCredit } = await import("./m2Typed");
     return createTypedLetterOfCredit(record);
+  }
+  if (entity === "shipments") {
+    const { createTypedShipment } = await import("./m2Typed");
+    return createTypedShipment(record);
+  }
+  if (entity === "sales_orders") {
+    const { createTypedSalesOrder } = await import("./m2Typed");
+    return createTypedSalesOrder(record);
+  }
+  if (entity === "deliveries") {
+    const { createTypedDispatch } = await import("./m2Typed");
+    return createTypedDispatch(record);
+  }
+  if (entity === "invoices") {
+    const { createTypedInvoice } = await import("./m2Typed");
+    return createTypedInvoice(record);
+  }
+  if (entity === "landed_cost_documents") {
+    const { createTypedLandedCostDocument } = await import("./m2Typed");
+    return createTypedLandedCostDocument(record);
   }
   if (isTypedEntity(entity)) throw typedUnavailable(entity, "Creating records");
   const row = await apiFetch<RecordDto>(pathFor(entity), {
@@ -200,7 +265,11 @@ export async function createRecord(entity: string, record: Partial<ErpRecord>): 
   return toErpRecord(row);
 }
 
-export async function updateRecord(entity: string, id: string, record: Partial<ErpRecord>): Promise<ErpRecord> {
+export async function updateRecord(
+  entity: string,
+  id: string,
+  record: Partial<ErpRecord>,
+): Promise<ErpRecord> {
   if (entity === "customers") {
     const { updateTypedCustomer } = await import("./crm");
     return updateTypedCustomer(id, record);
@@ -208,6 +277,38 @@ export async function updateRecord(entity: string, id: string, record: Partial<E
   if (entity === "contacts") {
     const { updateTypedContact } = await import("./crm");
     return updateTypedContact(id, record);
+  }
+  if (entity === "activities") {
+    const { updateTypedActivity } = await import("./crm");
+    return updateTypedActivity(id, record);
+  }
+  if (entity === "products") {
+    const { updateTypedProduct } = await import("./m2Typed");
+    return updateTypedProduct(id, record);
+  }
+  if (entity === "suppliers") {
+    const { updateTypedSupplier } = await import("./m2Typed");
+    return updateTypedSupplier(id, record);
+  }
+  if (entity === "shipments") {
+    const { updateTypedShipment } = await import("./m2Typed");
+    return updateTypedShipment(id, record);
+  }
+  if (entity === "proforma_invoices") {
+    const { updateTypedProformaInvoice } = await import("./m2Typed");
+    return updateTypedProformaInvoice(id, record);
+  }
+  if (entity === "letters_of_credit") {
+    const { updateTypedLetterOfCredit } = await import("./m2Typed");
+    return updateTypedLetterOfCredit(id, record);
+  }
+  if (entity === "landed_cost_documents") {
+    const { updateTypedLandedCostDocument } = await import("./m2Typed");
+    return updateTypedLandedCostDocument(id, record);
+  }
+  if (entity === "warehouses") {
+    const { updateTypedWarehouse } = await import("./m2Typed");
+    return updateTypedWarehouse(id, record);
   }
   if (isTypedEntity(entity)) throw typedUnavailable(entity, "Editing records");
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/`, {
@@ -223,7 +324,12 @@ export async function deleteRecord(entity: string, id: string): Promise<void> {
   await apiFetch(`${pathFor(entity)}${id}/`, { method: "DELETE", silent: true });
 }
 
-export async function recordAction(entity: string, id: string, action: string, body?: Record<string, unknown>): Promise<ErpRecord> {
+export async function recordAction(
+  entity: string,
+  id: string,
+  action: string,
+  body?: Record<string, unknown>,
+): Promise<ErpRecord> {
   if (isTypedEntity(entity)) throw typedUnavailable(entity, `The "${action}" action`);
   const row = await apiFetch<RecordDto>(`${pathFor(entity)}${id}/${action}/`, {
     method: "POST",
@@ -234,5 +340,7 @@ export async function recordAction(entity: string, id: string, action: string, b
 }
 
 export function isMissingResource(err: unknown): boolean {
-  return err instanceof ApiError && (err.status === 404 || err.status === 501);
+  return err instanceof ApiError &&
+    err.code !== "LIVE_DOMAIN_RESOURCE_UNAVAILABLE" &&
+    (err.status === 404 || err.status === 501);
 }

@@ -102,6 +102,13 @@ export function confirmSalesOrder(id: string) {
   });
 }
 
+export function releaseSalesOrderReservations(id: string) {
+  return apiFetch<SalesOrderDto>(PHASE3_TYPED_API.salesOrderReleaseReservations(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
 /** Server-authoritative 3-way match. Client threeWayMatch() is display-only. */
 export function matchSupplierBill(id: string) {
   return apiFetch<SupplierBillDto>(PHASE3_TYPED_API.supplierBillMatch(id), {
@@ -279,6 +286,13 @@ export function lcMarkManufacturing(id: string) {
   });
 }
 
+export function lcStartPreDispatch(id: string) {
+  return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcStartPreDispatch(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
 export function lcVerifyPreDispatch(id: string, presentKeys: string[]) {
   return apiFetch<LetterOfCreditDto>(PHASE3_TYPED_API.lcVerifyPreDispatch(id), {
     method: "POST",
@@ -286,4 +300,3 @@ export function lcVerifyPreDispatch(id: string, presentKeys: string[]) {
     silent: true,
   });
 }
-

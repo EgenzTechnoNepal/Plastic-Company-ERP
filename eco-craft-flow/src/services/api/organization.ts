@@ -61,8 +61,14 @@ export interface NumberingSeriesDto {
 }
 
 async function listAll<T>(path: string): Promise<T[]> {
-  const { data } = await apiFetchMeta<T[]>(path, { query: { page_size: 200 }, silent: true });
-  return Array.isArray(data) ? data : [];
+  const { data } = await apiFetchMeta<T[] | { results?: T[]; data?: T[] }>(path, {
+    query: { page_size: 200 },
+    silent: true,
+  });
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data.results)) return data.results;
+  if (Array.isArray(data.data)) return data.data;
+  throw new Error(`The ${path} response did not contain a list.`);
 }
 
 export const organizationApi = {
