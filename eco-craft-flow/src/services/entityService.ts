@@ -23,7 +23,12 @@ import {
 } from "@/services/api/records";
 import { runTypedWorkflowAction } from "@/services/api/m2Typed";
 import type { TypedListQuery } from "@/services/api/m2Typed";
-import { M2_DEMO_TYPED_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
+import {
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
+  liveDomainEntityUnavailable,
+  M2_DEMO_TYPED_ENTITIES,
+  M2_TYPED_DETAIL_ENTITIES,
+} from "@/services/api/typedEntities";
 import { decideTypedApproval, listTypedApprovals, type ApprovalDto } from "@/services/api/crm";
 import { fetchAuditLogs } from "@/services/api/audit";
 import { invalidateLive } from "@/services/queryClient";
@@ -126,7 +131,12 @@ export function createEntityService(entity: string, opts: ServiceOptions = { mod
         try {
           return await getRecord(entity, id);
         } catch (err) {
-          if (M2_DEMO_TYPED_ENTITIES.has(entity)) throw err;
+          if (
+            M2_DEMO_TYPED_ENTITIES.has(entity) ||
+            LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)
+          ) {
+            throw err;
+          }
           if (!isMissingResource(err)) {
             const local = rows().find((r) => r.id === id || r.code === id);
             if (local) return local;
@@ -479,7 +489,11 @@ export type EntityService = ReturnType<typeof createEntityService>;
 
 function useRecordsQuery(entity: string, enabledOverride = true, query?: TypedListQuery) {
   const live = useAuthStore((s) => s.source === "api");
-  const enabled = live && enabledOverride && Boolean(RECORD_PATHS[entity]);
+  const enabled =
+    live &&
+    enabledOverride &&
+    !LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity) &&
+    Boolean(RECORD_PATHS[entity]);
   const result = useQuery({
     queryKey: ["records", entity, query ?? {}],
     queryFn: () => listRecords(entity, query),
@@ -510,6 +524,7 @@ function errorText(err: unknown): string {
 export function useRecords(entity: string, query?: TypedListQuery): ErpRecord[] {
   const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
   const { live, data } = useRecordsQuery(entity, true, query);
+  if (live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) return EMPTY_RECORDS;
   if (live && M2_DEMO_TYPED_ENTITIES.has(entity)) {
     // Never show localStorage mock stock/commercials while authenticated live.
     return data ?? EMPTY_RECORDS;
@@ -521,6 +536,13 @@ export function useRecords(entity: string, query?: TypedListQuery): ErpRecord[] 
 export function useRecordsStatus(entity: string, code?: string, query?: TypedListQuery): { loading: boolean; error: string | null; retry: () => void } {
   const detail = useRecordQuery(entity, code ?? "");
   const list = useRecordsQuery(entity, !detail.enabled, query);
+  if (list.live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return {
+      loading: false,
+      error: liveDomainEntityUnavailable(entity).message,
+      retry: () => undefined,
+    };
+  }
   if (detail.enabled) {
     return {
       loading: detail.isLoading,
@@ -538,6 +560,7 @@ export function useRecord(entity: string, code: string): ErpRecord | undefined {
   const detail = useRecordQuery(entity, code);
   const { live, data } = useRecordsQuery(entity, !detail.enabled);
   const mock = useDb((s) => s.records[entity] ?? EMPTY_RECORDS);
+  if (live && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) return undefined;
   if (detail.enabled) return detail.data;
   const rows = live && data ? data : mock;
   return rows.find((r) => r.code === code || r.id === code);

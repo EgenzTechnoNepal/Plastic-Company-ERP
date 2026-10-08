@@ -52,6 +52,7 @@ import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
 import {
   isTypedEntity,
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
   LIVE_TYPED_EDIT_ENTITIES,
   M2_DEMO_TYPED_ENTITIES,
   M2_TYPED_DETAIL_ENTITIES,
@@ -123,6 +124,19 @@ export function RecordDetailPage() {
 
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
+  }
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return (
+      <EmptyState
+        title="Live CRM workflow unavailable"
+        description={`${def.label} are backed only by legacy DomainRecord compatibility data. No live detail actions are available without a canonical typed backend API.`}
+        action={
+          <Button asChild variant="outline">
+            <Link to={listPathFor(entity) as never}>Back to {def.label}</Link>
+          </Button>
+        }
+      />
+    );
   }
   if (!record && loadStatus.loading) {
     return <p className="py-12 text-center text-sm text-muted-foreground">Loading {code}…</p>;

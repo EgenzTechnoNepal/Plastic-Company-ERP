@@ -18,6 +18,7 @@ import {
   reviseQuotation,
 } from "@/features/sales/cycle";
 import { isLiveSession } from "@/store/auth";
+import { LIVE_UNSUPPORTED_DOMAIN_ENTITIES } from "@/services/api/typedEntities";
 import type { ErpRecord } from "@/types/erp";
 
 export function CycleActions({ entity, record, module }: { entity: string; record: ErpRecord; module: string }) {
@@ -35,6 +36,14 @@ export function CycleActions({ entity, record, module }: { entity: string; recor
       toast.error(err instanceof Error ? err.message : "Action failed");
     }
   };
+
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return (
+      <span className="self-center text-xs text-muted-foreground">
+        Live {entity.replace(/_/g, " ")} actions are unavailable until a canonical typed backend API exists.
+      </span>
+    );
+  }
 
   if (entity === "leads") {
     const stage = String(record.fields.stage ?? "");

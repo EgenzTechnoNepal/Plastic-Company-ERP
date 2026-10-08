@@ -50,6 +50,18 @@ export const M2_TYPED_DETAIL_ENTITIES = new Set([
   "invoices",
 ]);
 
+/** CRM workflows still backed only by legacy DomainRecord compatibility endpoints. */
+export const LIVE_UNSUPPORTED_DOMAIN_ENTITIES = new Set(["leads", "opportunities", "quotations"]);
+
+export function liveDomainEntityUnavailable(entity: string): ApiError {
+  const label = entity.replace(/_/g, " ");
+  return new ApiError(
+    "LIVE_DOMAIN_RESOURCE_UNAVAILABLE",
+    `${label} are unavailable in live mode because the backend does not expose a canonical typed CRM API for this workflow.`,
+    501,
+  );
+}
+
 /** Typed entities with create endpoints wired to the frontend API adapters. */
 export const LIVE_TYPED_CREATE_ENTITIES = new Set([
   "suppliers",

@@ -32,7 +32,7 @@ import { makeLines, newLineId, nextCode, useRecord, useRecords, useRecordsStatus
 import { docTotals } from "@/types/erp";
 import type { LineItem } from "@/types/erp";
 import { ApiError } from "@/services/api/client";
-import { M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
+import { LIVE_UNSUPPORTED_DOMAIN_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "@/services/api/typedEntities";
 import { listTypedCurrencies, listTypedIncoterms, listTypedUoms, productSkuPrefix, suggestProductSku } from "@/services/api/m2Typed";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
@@ -1037,6 +1037,19 @@ export function RecordFormPage({ mode }: { mode: "new" | "edit" }) {
 
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
+  }
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return (
+      <EmptyState
+        title={`Live ${def.label.toLowerCase()} are unavailable`}
+        description="This workflow has no canonical typed backend API. No live record was loaded or saved."
+        action={
+          <Button asChild variant="outline">
+            <Link to={listPathFor(entity) as never}>Back to {def.label}</Link>
+          </Button>
+        }
+      />
+    );
   }
   if (mode === "new" && isLiveSession() && (entity === "gate_entries" || entity === "grns")) {
     return (

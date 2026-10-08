@@ -1,7 +1,13 @@
 import { apiFetch, apiFetchMeta, ApiError } from "./client";
-import { isTypedEntity, typedUnavailable } from "./typedEntities";
+import {
+  isTypedEntity,
+  liveDomainEntityUnavailable,
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
+  typedUnavailable,
+} from "./typedEntities";
 import type { TypedListQuery } from "./m2Typed";
 import type { DocStatus, ErpRecord, LineItem, StatusEvent } from "@/types/erp";
+import { isLiveSession } from "@/store/auth";
 
 /** Django path (under /api/v1) for each frontend entity key. */
 export const RECORD_PATHS: Record<string, string> = {
@@ -132,6 +138,9 @@ export function fromErpRecord(record: Partial<ErpRecord>, entity: string) {
 }
 
 function pathFor(entity: string): string {
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    throw liveDomainEntityUnavailable(entity);
+  }
   const p = RECORD_PATHS[entity];
   if (!p) throw new Error(`No live API path for entity "${entity}"`);
   return p;
@@ -331,5 +340,7 @@ export async function recordAction(
 }
 
 export function isMissingResource(err: unknown): boolean {
-  return err instanceof ApiError && (err.status === 404 || err.status === 501);
+  return err instanceof ApiError &&
+    err.code !== "LIVE_DOMAIN_RESOURCE_UNAVAILABLE" &&
+    (err.status === 404 || err.status === 501);
 }

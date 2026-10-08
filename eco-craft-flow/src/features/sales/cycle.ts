@@ -6,6 +6,7 @@ import { confirmSalesOrder, setSalesOrderFulfillment } from "@/services/api/phas
 import { PHASE2_TYPED_API } from "@/services/api/phase2";
 import { apiFetch } from "@/services/api/client";
 import { isLiveSession } from "@/store/auth";
+import { liveDomainEntityUnavailable } from "@/services/api/typedEntities";
 import type { ErpRecord, LineItem } from "@/types/erp";
 
 export const DISCOUNT_THRESHOLD_PCT = 10;
@@ -92,7 +93,8 @@ export async function stockCheckViaBalances(
         ? `Insufficient ATC: ${shortages.map((s) => `${s.item} need ${s.need}, free ${s.free}`).join("; ")}.`
         : "ATC available",
     };
-  } catch {
+  } catch (err) {
+    if (isLiveSession()) throw err;
     return stockCheck(lines);
   }
 }
@@ -107,6 +109,7 @@ async function linkBoth(a: ErpRecord, b: ErpRecord) {
 }
 
 export async function convertLeadToOpportunity(lead: ErpRecord): Promise<ErpRecord> {
+  if (isLiveSession()) throw liveDomainEntityUnavailable("leads");
   const opp = await getService("opportunities").create({
     title: lead.title,
     status: "open",
@@ -132,6 +135,7 @@ export async function convertLeadToOpportunity(lead: ErpRecord): Promise<ErpReco
 }
 
 export async function markLeadLost(lead: ErpRecord, reason: string): Promise<ErpRecord> {
+  if (isLiveSession()) throw liveDomainEntityUnavailable("leads");
   if (!reason.trim()) throw new Error("Lost reason is required");
   const updated = await getService("leads").update(lead.id, {
     status: "closed",
@@ -142,6 +146,7 @@ export async function markLeadLost(lead: ErpRecord, reason: string): Promise<Erp
 }
 
 export async function reviseQuotation(qt: ErpRecord): Promise<ErpRecord> {
+  if (isLiveSession()) throw liveDomainEntityUnavailable("quotations");
   const current = String(qt.fields.revision ?? "Rev 01");
   const n = Number(current.replace(/\D+/g, "")) || 1;
   const revision = `Rev ${String(n + 1).padStart(2, "0")}`;
@@ -182,6 +187,9 @@ export async function dispatchQuotation(qt: ErpRecord, channel: "Email" | "Whats
 }
 
 export async function convertQuotationToOrder(qt: ErpRecord): Promise<ErpRecord> {
+  if (isLiveSession()) throw new Error(
+    "Quote-to-sales conversion is unavailable in live mode because quotations have no canonical typed backend API. Create a Sales Order from the typed Sales Orders screen instead.",
+  );
   if (qt.status !== "approved" && qt.status !== "completed") {
     throw new Error("Approve the quotation before converting to a sales order.");
   }
