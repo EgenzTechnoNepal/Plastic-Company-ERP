@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Calculator, Plus, Save, Send, Trash2 } from "lucide-react";
+import { Calculator, Plus, RotateCcw, Save, Send, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +20,7 @@ import { isLiveSession } from "@/store/auth";
 import {
   createTypedLandedCostComponent,
   deleteTypedLandedCostComponent,
+  adjustTypedLandedCost,
   listTypedLandedCostComponents,
   postTypedLandedCost,
   previewTypedLandedCost,
@@ -166,9 +167,10 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
   const allocations = asAllocations(record.fields.allocations);
   const status = String(record.fields.serverStatus ?? record.status).toUpperCase();
   const [preview, setPreview] = useState<LandedCostPreviewDto | null>(null);
-  const [busy, setBusy] = useState<"preview" | "post" | "component" | null>(null);
+  const [busy, setBusy] = useState<"preview" | "post" | "adjust" | "component" | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [postOpen, setPostOpen] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, ComponentForm>>({});
   const [newRow, setNewRow] = useState<ComponentForm>(() => ({
     category: "INTERNATIONAL_FREIGHT",
@@ -232,6 +234,22 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
       setPreview(result);
       refresh();
       toast.success("Landed cost posted");
+      return true;
+    } catch (err) {
+      toastApiError(err);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runAdjust = async () => {
+    setBusy("adjust");
+    try {
+      const result = await adjustTypedLandedCost(id);
+      setPreview(result);
+      refresh();
+      toast.success("Landed cost adjusted");
       return true;
     } catch (err) {
       toastApiError(err);
@@ -435,6 +453,14 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
               <Button size="sm" variant="outline" onClick={runPreview} disabled={busy !== null || status === "POSTED"}>
                 <Calculator className="mr-1.5 h-4 w-4" /> Preview
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAdjustOpen(true)}
+                disabled={busy !== null || status === "POSTED" || status === "CANCELLED"}
+              >
+                <RotateCcw className="mr-1.5 h-4 w-4" /> Adjust
+              </Button>
               <Button size="sm" onClick={() => setPostOpen(true)} disabled={busy !== null || status === "POSTED" || status === "CANCELLED"}>
                 <Send className="mr-1.5 h-4 w-4" /> Post
               </Button>
@@ -546,6 +572,14 @@ export function LandedCostPanel({ record }: { record: ErpRecord }) {
         description="The Django landed-cost service will post this document and apply its backend-calculated costs."
         confirmLabel="Post landed cost"
         onConfirm={runPost}
+      />
+      <ConfirmDialog
+        open={adjustOpen}
+        onOpenChange={setAdjustOpen}
+        title="Adjust landed cost"
+        description="The Django landed-cost service will apply this adjustment using its backend-calculated costs."
+        confirmLabel="Adjust landed cost"
+        onConfirm={runAdjust}
       />
     </>
   );
