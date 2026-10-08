@@ -118,6 +118,29 @@ function unwrap(json: unknown, status: number): { data: unknown; meta: ApiMeta }
   return { data: json, meta: {} };
 }
 
+function responseErrorMessage(body: unknown, fallback: string): string {
+  if (typeof body === "string" && body.trim()) return body;
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fallback;
+
+  const details = body as Record<string, unknown>;
+  for (const key of ["detail", "message", "non_field_errors"]) {
+    const value = details[key];
+    if (typeof value === "string" && value.trim()) return value;
+    if (Array.isArray(value)) {
+      const messages = value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+      if (messages.length) return messages.join(" ");
+    }
+  }
+
+  const fieldErrors = Object.entries(details).flatMap(([field, value]) => {
+    const messages = Array.isArray(value) ? value : [value];
+    return messages
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map((message) => `${field}: ${message}`);
+  });
+  return fieldErrors.length ? fieldErrors.join(" ") : fallback;
+}
+
 async function parseBody(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return null;
@@ -195,7 +218,15 @@ export async function apiFetchMeta<T>(path: string, opts: ApiOptions = {}): Prom
   try {
     const unwrapped = unwrap(json, res.status);
     if (!res.ok) {
-      throw new ApiError("ERROR", res.statusText || "Request failed", res.status);
+      const body = json && typeof json === "object" && !Array.isArray(json)
+        ? json as Record<string, unknown>
+        : {};
+      throw new ApiError(
+        "ERROR",
+        responseErrorMessage(unwrapped.data, res.statusText || "Request failed"),
+        res.status,
+        body,
+      );
     }
     return { data: unwrapped.data as T, meta: unwrapped.meta };
   } catch (err) {
