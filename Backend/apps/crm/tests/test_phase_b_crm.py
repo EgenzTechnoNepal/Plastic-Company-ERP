@@ -1,5 +1,5 @@
 """
-Phase B — typed CRM + company isolation + RBAC regression tests.
+Phase B â€” typed CRM + company isolation + RBAC regression tests.
 """
 
 from decimal import Decimal
@@ -11,12 +11,13 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import Action, Module, Role, RolePermission, User, UserRole
 from apps.core.exceptions import ERPError
-from apps.crm.models import Contact, CrmActivity, Customer
+from apps.crm.models import Contact, ContactParty, CrmActivity, Customer
 from apps.crm.services import (
     CrmError,
     create_activity,
     create_contact,
     create_customer,
+    update_contact,
     update_customer,
 )
 from apps.organization.models import Branch, Company, Currency
@@ -84,6 +85,178 @@ class CrmServiceIsolationTests(TestCase):
                 user=self.user,
                 supplier=supplier,
             )
+    def test_customer_contact_requires_customer_and_rejects_supplier(self):
+        customer = create_customer(
+            company=self.company,
+            code="CUST-CONTACT",
+            legal_name="Customer Contact",
+            user=self.user,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company,
+            code="SUP-CONTACT",
+            legal_name="Supplier Contact",
+            trading_name="Supplier Contact",
+            preferred_incoterm=self.fob,
+        )
+
+        contact = create_contact(
+            company=self.company,
+            name="Customer Contact Person",
+            user=self.user,
+            party_kind=ContactParty.CUSTOMER,
+            customer=customer,
+        )
+        self.assertEqual(contact.party_kind, ContactParty.CUSTOMER)
+        self.assertEqual(contact.customer_id, customer.id)
+        self.assertIsNone(contact.supplier_id)
+
+        with self.assertRaises(CrmError) as ctx:
+            create_contact(
+                company=self.company,
+                name="Invalid Customer Contact",
+                user=self.user,
+                party_kind=ContactParty.CUSTOMER,
+                supplier=supplier,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+    def test_supplier_contact_requires_supplier_and_rejects_customer(self):
+        customer = create_customer(
+            company=self.company,
+            code="CUST-SUP-CONTACT",
+            legal_name="Customer",
+            user=self.user,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company,
+            code="SUP-SUP-CONTACT",
+            legal_name="Supplier",
+            trading_name="Supplier",
+            preferred_incoterm=self.fob,
+        )
+
+        contact = create_contact(
+            company=self.company,
+            name="Supplier Contact Person",
+            user=self.user,
+            party_kind=ContactParty.SUPPLIER,
+            supplier=supplier,
+        )
+        self.assertEqual(contact.party_kind, ContactParty.SUPPLIER)
+        self.assertEqual(contact.supplier_id, supplier.id)
+        self.assertIsNone(contact.customer_id)
+
+        with self.assertRaises(CrmError) as ctx:
+            create_contact(
+                company=self.company,
+                name="Invalid Supplier Contact",
+                user=self.user,
+                party_kind=ContactParty.SUPPLIER,
+                customer=customer,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+    def test_customer_contact_cannot_be_created_without_customer(self):
+        with self.assertRaises(CrmError) as ctx:
+            create_contact(
+                company=self.company,
+                name="Missing Customer",
+                user=self.user,
+                party_kind=ContactParty.CUSTOMER,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+    def test_supplier_contact_cannot_be_created_without_supplier(self):
+        with self.assertRaises(CrmError) as ctx:
+            create_contact(
+                company=self.company,
+                name="Missing Supplier",
+                user=self.user,
+                party_kind=ContactParty.SUPPLIER,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+    def test_contact_update_cannot_create_invalid_party_relationship(self):
+        customer = create_customer(
+            company=self.company,
+            code="CUST-UPDATE",
+            legal_name="Customer",
+            user=self.user,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company,
+            code="SUP-UPDATE",
+            legal_name="Supplier",
+            trading_name="Supplier",
+            preferred_incoterm=self.fob,
+        )
+
+        contact = create_contact(
+            company=self.company,
+            name="Existing Contact",
+            user=self.user,
+            party_kind=ContactParty.CUSTOMER,
+            customer=customer,
+        )
+
+        with self.assertRaises(CrmError) as ctx:
+            update_contact(
+                contact=contact,
+                user=self.user,
+                party_kind=ContactParty.SUPPLIER,
+                customer=None,
+                supplier=None,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+        with self.assertRaises(CrmError) as ctx:
+            update_contact(
+                contact=contact,
+                user=self.user,
+                supplier=supplier,
+            )
+        self.assertEqual(ctx.exception.code, "INVALID_PARTY_RELATIONSHIP")
+
+        contact.refresh_from_db()
+        self.assertEqual(contact.party_kind, ContactParty.CUSTOMER)
+        self.assertEqual(contact.customer_id, customer.id)
+        self.assertIsNone(contact.supplier_id)
+
+    def test_activity_contact_supplier_mismatch_rejected(self):
+        supplier_a = Supplier.objects.create(
+            company=self.company,
+            code="SUP-ACT-A",
+            legal_name="Supplier A",
+            trading_name="Supplier A",
+            preferred_incoterm=self.fob,
+        )
+        supplier_b = Supplier.objects.create(
+            company=self.company,
+            code="SUP-ACT-B",
+            legal_name="Supplier B",
+            trading_name="Supplier B",
+            preferred_incoterm=self.fob,
+        )
+
+        contact = create_contact(
+            company=self.company,
+            name="Supplier Contact",
+            user=self.user,
+            party_kind=ContactParty.SUPPLIER,
+            supplier=supplier_a,
+        )
+
+        with self.assertRaises(CrmError) as ctx:
+            create_activity(
+                company=self.company,
+                subject="Invalid supplier activity",
+                user=self.user,
+                supplier=supplier_b,
+                contact=contact,
+                activity_type="CALL",
+            )
+        self.assertEqual(ctx.exception.code, "CONTACT_MISMATCH")
 
     def test_activity_create(self):
         cust = create_customer(

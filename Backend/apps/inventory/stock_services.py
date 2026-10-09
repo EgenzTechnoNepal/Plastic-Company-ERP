@@ -406,7 +406,7 @@ def fifo_issue(
     entries: list[StockLedgerEntry] = []
     ref_id = reference_id or uuid4()
 
-    layers = list(eligible_layers_qs(company, item, warehouse=warehouse).select_for_update())
+    layers = list(eligible_layers_qs(company, item, warehouse=warehouse).select_for_update(of=("self",)))
     for layer in layers:
         if remaining <= 0:
             break
@@ -524,7 +524,7 @@ def reserve_stock(
     if receipt_layer is not None:
         # Lock the explicit layer first, then validate & allocate from locked state
         layer = (
-            InventoryReceiptLayer.objects.select_for_update()
+            InventoryReceiptLayer.objects.select_for_update(of=("self",))
             .select_related("lot", "item", "warehouse")
             .get(pk=receipt_layer.pk)
         )
@@ -542,7 +542,7 @@ def reserve_stock(
         # Lock ALL eligible layers before computing available free qty
         layers = list(
             eligible_layers_qs(company, item, warehouse=warehouse)
-            .select_for_update()
+            .select_for_update(of=("self",))
             .select_related("lot", "item", "warehouse")
         )
         locked_free = sum((_layer_free_qty(lyr) for lyr in layers), Decimal("0"))

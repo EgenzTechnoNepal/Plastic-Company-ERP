@@ -59,7 +59,7 @@ def _sum_posted_additional_for_lot(lot, *, include_document: LandedCostDocument 
 @transaction.atomic
 def post_landed_cost(*, document: LandedCostDocument, user=None) -> dict:
     document = (
-        LandedCostDocument.objects.select_for_update()
+        LandedCostDocument.objects.select_for_update(of=("self",))
         .prefetch_related("components")
         .select_related("lot", "company")
         .get(pk=document.pk)

@@ -216,4 +216,23 @@ def cancel_request(*, approval: ApprovalRequest, user=None, reason: str = "") ->
             "updated_at",
         ]
     )
+    AuditService.log(
+        user=user,
+        action="cancel",
+        module=approval.module_code,
+        model_name="ApprovalRequest",
+        object_id=str(approval.id),
+        document_number=approval.document_number,
+        after_data={"status": approval.status},
+        reason=reason,
+    )
+    emit(
+        "ApprovalCancelled",
+        {
+            "approval_id": str(approval.id),
+            "target_type": approval.target_type,
+            "target_id": str(approval.target_id),
+            "module_code": approval.module_code,
+        },
+    )
     return approval
