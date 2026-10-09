@@ -8,10 +8,12 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Action, Module, Role, RolePermission, User, UserRole
+from apps.audit.models import AuditLog
 from apps.organization.models import Branch, Company
 from apps.workflow.approval_services import (
     ApprovalError,
     approve_request,
+    cancel_request,
     reject_request,
     request_approval,
 )
@@ -105,6 +107,38 @@ class ApprovalServiceTests(TestCase):
             approve_request(approval=req, user=editor)
         self.assertEqual(ctx.exception.code, "APPROVAL_FORBIDDEN")
 
+    def test_cancel_by_requester(self):
+        req = request_approval(
+            company=self.company,
+            module_code="crm",
+            target_type="crm.Customer",
+            target_id=self.target_id,
+            user=self.user,
+            document_number="CUST-CANCEL",
+        )
+        cancelled = cancel_request(approval=req, user=self.user, reason="no longer needed")
+        self.assertEqual(cancelled.status, ApprovalStatus.CANCELLED)
+
+    def test_cancel_audited(self):
+        """cancel_request must write an audit log entry (same as approve/reject)."""
+        req = request_approval(
+            company=self.company,
+            module_code="crm",
+            target_type="crm.Customer",
+            target_id=self.target_id,
+            user=self.user,
+            document_number="CUST-CANCEL-AUDIT",
+        )
+        cancel_request(approval=req, user=self.user, reason="test cancel audit")
+        audit = AuditLog.objects.filter(
+            module="crm",
+            model_name="ApprovalRequest",
+            action="cancel",
+            object_id=str(req.id),
+        )
+        self.assertTrue(audit.exists(), "cancel_request must produce an audit log entry")
+        self.assertEqual(audit.first().reason, "test cancel audit")
+
 
 class ApprovalApiTests(APITestCase):
     def setUp(self):
@@ -150,6 +184,94 @@ class ApprovalApiTests(APITestCase):
         self.assertEqual(approve.status_code, status.HTTP_200_OK)
         req = ApprovalRequest.objects.get(pk=approval_id)
         self.assertEqual(req.status, ApprovalStatus.APPROVED)
+
+    def _create_pending_approval(self, document_number):
+        response = self.client.post(
+            reverse("approval-request-list"),
+            {
+                "company": str(self.company.id),
+                "module_code": "crm",
+                "target_type": "crm.Customer",
+                "target_id": str(uuid.uuid4()),
+                "document_number": document_number,
+                "title": "Approval API regression",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        approval_id = response.data["id"] if "id" in response.data else response.data["data"]["id"]
+        request = ApprovalRequest.objects.get(pk=approval_id)
+        self.assertEqual(request.status, ApprovalStatus.PENDING)
+        self.assertEqual(request.requested_by, self.user)
+        return request
+
+    def test_reject_via_api_persists_reason_audit_and_event(self):
+        request = self._create_pending_approval("CUST-REJECT-API")
+
+        with self.assertLogs("apps.events", level="INFO") as event_logs:
+            response = self.client.post(
+                reverse("approval-request-reject", kwargs={"pk": request.id}),
+                {"reason": "Missing documents"},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        request.refresh_from_db()
+        self.assertEqual(request.status, ApprovalStatus.REJECTED)
+        self.assertEqual(request.decision_reason, "Missing documents")
+        self.assertEqual(request.decided_by, self.user)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                module="crm",
+                model_name="ApprovalRequest",
+                action="reject",
+                object_id=str(request.id),
+                reason="Missing documents",
+            ).exists()
+        )
+        self.assertTrue(any("domain_event=ApprovalRejected" in msg for msg in event_logs.output))
+
+    def test_cancel_via_api_persists_reason_audit_and_event(self):
+        request = self._create_pending_approval("CUST-CANCEL-API")
+
+        with self.assertLogs("apps.events", level="INFO") as event_logs:
+            response = self.client.post(
+                reverse("approval-request-cancel", kwargs={"pk": request.id}),
+                {"reason": "Request withdrawn"},
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        request.refresh_from_db()
+        self.assertEqual(request.status, ApprovalStatus.CANCELLED)
+        self.assertEqual(request.decision_reason, "Request withdrawn")
+        self.assertEqual(request.decided_by, self.user)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                module="crm",
+                model_name="ApprovalRequest",
+                action="cancel",
+                object_id=str(request.id),
+                reason="Request withdrawn",
+            ).exists()
+        )
+        self.assertTrue(any("domain_event=ApprovalCancelled" in msg for msg in event_logs.output))
+
+    def test_invalid_transition_via_api_is_rejected_without_mutation(self):
+        request = self._create_pending_approval("CUST-INVALID-TRANSITION")
+        approved = self.client.post(
+            reverse("approval-request-approve", kwargs={"pk": request.id}),
+            {"reason": "Approved"},
+        )
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+
+        response = self.client.post(
+            reverse("approval-request-reject", kwargs={"pk": request.id}),
+            {"reason": "Too late"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        request.refresh_from_db()
+        self.assertEqual(request.status, ApprovalStatus.APPROVED)
+        self.assertEqual(request.decision_reason, "Approved")
 
     def test_cross_company_approval_retrieve_blocked(self):
         foreign = ApprovalRequest.objects.create(

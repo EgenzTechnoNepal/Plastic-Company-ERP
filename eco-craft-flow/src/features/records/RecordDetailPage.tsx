@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Pencil } from "lucide-react";
@@ -20,11 +20,15 @@ import { Customer360 } from "@/features/crm/Customer360";
 import { SlaClock } from "@/features/crm/SlaClock";
 import { CycleActions } from "@/features/sales/CycleActions";
 import { FulfillmentPanel } from "@/features/sales/FulfillmentPanel";
+import { SalesWorkflowPanel } from "@/features/sales/SalesWorkflowPanel";
+import { SalesDocumentActions } from "@/features/sales/SalesDocumentActions";
 import { PurchaseCycleActions } from "@/features/purchase/CycleActions";
 import { RfqCompare } from "@/features/purchase/RfqCompare";
 import { ThreeWayMatchPanel } from "@/features/purchase/ThreeWayMatchPanel";
 import { OcrPanel } from "@/features/purchase/OcrPanel";
 import { Product360 } from "@/features/inventory/Product360";
+import { LandedCostPanel } from "@/features/inventory/LandedCostPanel";
+import { InventoryLotPanel } from "@/features/inventory/InventoryLotPanel";
 import { WarehouseCycleActions } from "@/features/warehouse/CycleActions";
 import { ProductionCycleActions } from "@/features/production/CycleActions";
 import { BomExplosion } from "@/features/production/BomExplosion";
@@ -42,11 +46,20 @@ import { SupplierScorecard } from "@/features/quality/SupplierScorecard";
 import { LcWorkflowPanel } from "@/features/purchase/LcWorkflowPanel";
 import { LcGateGuardBanner } from "@/features/purchase/LcGateGuardBanner";
 import { InboundJourneyPanel } from "@/features/purchase/InboundJourneyPanel";
+import { InboundRecordActions } from "@/features/purchase/InboundRecordActions";
 import { QcWorkflowPanel } from "@/features/quality/QcWorkflowPanel";
 import { getService } from "@/services/catalog";
 import { isLiveSession } from "@/store/auth";
-import { isTypedEntity } from "@/services/api/typedEntities";
-import { logView, useApprovals, useAudit, useRecord, useRecordsStatus } from "@/services/entityService";
+import {
+  isTypedEntity,
+  LIVE_UNSUPPORTED_DOMAIN_ENTITIES,
+  LIVE_TYPED_EDIT_ENTITIES,
+  M2_DEMO_TYPED_ENTITIES,
+  M2_TYPED_DETAIL_ENTITIES,
+} from "@/services/api/typedEntities";
+import { hasTypedWorkflowAction } from "@/services/api/m2Typed";
+import { logView, useApprovals, useAudit, useRecord, useRecords, useRecordsStatus } from "@/services/entityService";
+import type { DocStatus } from "@/types/erp";
 
 function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   const groups = new Map<string, typeof def.fields>();
@@ -59,6 +72,35 @@ function groupFields(def: NonNullable<ReturnType<typeof getEntity>>) {
   return Array.from(groups.entries());
 }
 
+function GrnQcLinks({ grnId }: { grnId: string }) {
+  const inspections = useRecords("qc_inspections", { grn: grnId });
+  const status = useRecordsStatus("qc_inspections", undefined, { grn: grnId });
+  if (status.loading) {
+    return (
+      <Card className="rounded-2xl border-border/60">
+        <CardContent className="py-3 text-sm text-muted-foreground">Loading related QC inspections...</CardContent>
+      </Card>
+    );
+  }
+  if (status.error || inspections.length === 0) return null;
+  return (
+    <Card className="rounded-2xl border-border/60">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Related QC</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {inspections.map((inspection) => (
+          <Button key={inspection.id} asChild variant="outline" size="sm" className="mr-2">
+            <Link to={recordPath("qc_inspections", inspection.id) as never}>
+              {inspection.code} - {String(inspection.fields.lotStatus ?? inspection.status)}
+            </Link>
+          </Button>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function RecordDetailPage() {
   const params = useParams({ strict: false }) as { entity?: string; id?: string };
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -69,10 +111,12 @@ export function RecordDetailPage() {
   const entity = entityKeyFor(module, slug) ?? "";
   const def = getEntity(entity);
   const record = useRecord(entity, code);
-  const loadStatus = useRecordsStatus(entity);
+  const loadStatus = useRecordsStatus(entity, code);
   const audit = useAudit().filter((e) => e.recordId === record?.id || e.recordCode === code);
   const approvals = useApprovals().filter((a) => a.recordId === record?.id || a.recordCode === code);
   const [confirm, setConfirm] = useState<Extract<WorkflowAction, "reject" | "cancel" | "reverse" | "return"> | null>(null);
+  const [pendingAction, setPendingAction] = useState<WorkflowAction | null>(null);
+  const actionPending = useRef(false);
 
   useEffect(() => {
     if (record && entity && module) logView(module, entity, record.id, record.code);
@@ -80,6 +124,19 @@ export function RecordDetailPage() {
 
   if (!def || !entity) {
     return <EmptyState title="Unknown record type" description={`${module}/${slug} is not mapped.`} />;
+  }
+  if (isLiveSession() && LIVE_UNSUPPORTED_DOMAIN_ENTITIES.has(entity)) {
+    return (
+      <EmptyState
+        title="Live CRM workflow unavailable"
+        description={`${def.label} are backed only by legacy DomainRecord compatibility data. No live detail actions are available without a canonical typed backend API.`}
+        action={
+          <Button asChild variant="outline">
+            <Link to={listPathFor(entity) as never}>Back to {def.label}</Link>
+          </Button>
+        }
+      />
+    );
   }
   if (!record && loadStatus.loading) {
     return <p className="py-12 text-center text-sm text-muted-foreground">Loading {code}…</p>;
@@ -105,14 +162,38 @@ export function RecordDetailPage() {
   }
 
   const svc = getService(entity);
-  const actions = workflowActions(record, def);
+  const liveInboundActions = isLiveSession() && (entity === "gate_entries" || entity === "grns");
+  const liveSalesDocActions = isLiveSession() && isTypedEntity(entity) && (entity === "deliveries" || entity === "invoices");
+  const actionTargets: Partial<Record<WorkflowAction, DocStatus>> = {
+    submit: "submitted",
+    approve: "approved",
+    reject: "rejected",
+    return: "returned",
+    cancel: "cancelled",
+    post: "posted",
+    reverse: "reversed",
+    start: "in_progress",
+    complete: "completed",
+    close: "closed",
+  };
+  const actions = liveInboundActions || liveSalesDocActions
+    ? []
+    : workflowActions(record, def).filter((action) => {
+        if (!isLiveSession() || !M2_DEMO_TYPED_ENTITIES.has(entity)) return true;
+        if (action === "edit") return LIVE_TYPED_EDIT_ENTITIES.has(entity);
+        const target = actionTargets[action];
+        return target !== undefined && hasTypedWorkflowAction(entity, target);
+      });
   // Browser-side cycle panels read and write the offline store; typed records are server-authoritative.
   const localPanels = !(isLiveSession() && isTypedEntity(entity));
   const inboundPoId =
     !localPanels && entity === "purchase_orders" ? String(record.fields.typedPurchaseOrderId ?? "") : "";
   const list = listPathFor(entity);
 
-  const run = async (action: WorkflowAction, reason?: string) => {
+  const run = async (action: WorkflowAction, reason?: string): Promise<boolean> => {
+    if (actionPending.current) return false;
+    actionPending.current = true;
+    setPendingAction(action);
     try {
       if (action === "submit") await svc.submit(record.id);
       if (action === "approve") await svc.approve(record.id);
@@ -138,12 +219,18 @@ export function RecordDetailPage() {
         close: "closed",
       };
       toast.success(`${record.code} ${done[action]}`);
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Action failed");
+      return false;
+    } finally {
+      actionPending.current = false;
+      setPendingAction(null);
     }
   };
 
   const sections = groupFields(def);
+  const detailRef = M2_TYPED_DETAIL_ENTITIES.has(entity) ? record.id : record.code;
 
   return (
     <>
@@ -160,7 +247,7 @@ export function RecordDetailPage() {
               <>
                 {def.printable && (
                   <Button size="sm" variant="outline" asChild>
-                    <Link to={`${recordPath(entity, record.code)}/preview` as never}>Preview</Link>
+                    <Link to={`${recordPath(entity, detailRef)}/preview` as never}>Preview</Link>
                   </Button>
                 )}
                 {localPanels && (
@@ -175,7 +262,7 @@ export function RecordDetailPage() {
                 {actions.includes("edit") && !inboundPoId && (
                   <PermissionGuard action="edit" module={module}>
                     <Button size="sm" variant="outline" className="gap-1.5" asChild>
-                      <Link to={recordEditPath(entity, record.code) as never}>
+                      <Link to={recordEditPath(entity, detailRef) as never}>
                         <Pencil className="h-4 w-4" /> Edit
                       </Link>
                     </Button>
@@ -183,71 +270,71 @@ export function RecordDetailPage() {
                 )}
                 {actions.includes("submit") && (
                   <PermissionGuard action="submit" module={module}>
-                    <Button size="sm" onClick={() => run("submit")}>
-                      Submit
+                    <Button size="sm" onClick={() => void run("submit")} disabled={pendingAction !== null}>
+                      {pendingAction === "submit" ? "Submitting…" : "Submit"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("approve") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" onClick={() => run("approve")}>
-                      Approve
+                    <Button size="sm" onClick={() => void run("approve")} disabled={pendingAction !== null}>
+                      {pendingAction === "approve" ? "Approving…" : "Approve"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("reject") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("reject")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("reject")} disabled={pendingAction !== null}>
                       Reject
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("return") && (
                   <PermissionGuard action="approve" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("return")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("return")} disabled={pendingAction !== null}>
                       Return
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("post") && (
                   <PermissionGuard action="post" module={module}>
-                    <Button size="sm" onClick={() => run("post")}>
-                      Post
+                    <Button size="sm" onClick={() => void run("post")} disabled={pendingAction !== null}>
+                      {pendingAction === "post" ? "Posting…" : "Post"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("cancel") && (
                   <PermissionGuard action="cancel" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")}>
+                    <Button size="sm" variant="outline" onClick={() => setConfirm("cancel")} disabled={pendingAction !== null}>
                       Cancel
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("reverse") && (
                   <PermissionGuard action="reverse" module={module}>
-                    <Button size="sm" variant="destructive" onClick={() => setConfirm("reverse")}>
+                    <Button size="sm" variant="destructive" onClick={() => setConfirm("reverse")} disabled={pendingAction !== null}>
                       Reverse
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("start") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" onClick={() => run("start")}>
-                      Start
+                    <Button size="sm" onClick={() => void run("start")} disabled={pendingAction !== null}>
+                      {pendingAction === "start" ? "Starting…" : "Start"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("complete") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" onClick={() => run("complete")}>
-                      Mark Complete
+                    <Button size="sm" onClick={() => void run("complete")} disabled={pendingAction !== null}>
+                      {pendingAction === "complete" ? "Completing…" : "Mark Complete"}
                     </Button>
                   </PermissionGuard>
                 )}
                 {actions.includes("close") && (
                   <PermissionGuard action="edit" module={module}>
-                    <Button size="sm" variant="outline" onClick={() => run("close")}>
-                      Close
+                    <Button size="sm" variant="outline" onClick={() => void run("close")} disabled={pendingAction !== null}>
+                      {pendingAction === "close" ? "Closing…" : "Close"}
                     </Button>
                   </PermissionGuard>
                 )}
@@ -258,6 +345,7 @@ export function RecordDetailPage() {
         main={
           <>
             {inboundPoId && <InboundJourneyPanel purchaseOrderId={inboundPoId} />}
+            {liveInboundActions && <InboundRecordActions entity={entity} record={record} />}
             {!inboundPoId && sections.map(([title, fields]) => (
               <Card key={title} className="rounded-2xl border-border/60">
                 <CardHeader className="pb-2">
@@ -274,20 +362,18 @@ export function RecordDetailPage() {
             ))}
             {entity === "customers" && <Customer360 customer={record} />}
             {localPanels && entity === "products" && <Product360 product={record} />}
+            {entity === "landed_cost_documents" && <LandedCostPanel record={record} />}
+            {entity === "inventory_lots" && <InventoryLotPanel record={record} />}
             {entity === "tickets" && <SlaClock ticket={record} />}
             {localPanels && entity === "sales_orders" && <FulfillmentPanel order={record} />}
+            {!localPanels && entity === "sales_orders" && <SalesWorkflowPanel order={record} />}
+            {liveSalesDocActions && <SalesDocumentActions entity={entity} record={record} />}
             {entity === "rfqs" && <RfqCompare rfq={record} />}
             {localPanels && entity === "purchase_bills" && <ThreeWayMatchPanel bill={record} />}
             {entity === "ocr_bills" && <OcrPanel scan={record} />}
             {(entity === "gate_entries" || entity === "grns") && <LcGateGuardBanner record={record} />}
-            {entity === "letters_of_credit" && (
-              <LcWorkflowPanel
-                record={record}
-                onUpdated={() => {
-                  toast.success("LC updated — refresh list if status looks stale");
-                }}
-              />
-            )}
+            {entity === "grns" && <GrnQcLinks grnId={record.id} />}
+            {entity === "letters_of_credit" && <LcWorkflowPanel record={record} />}
             {entity === "boms" && <BomExplosion bom={record} />}
             {entity === "production_plans" && <PlanPanel plan={record} />}
             {entity === "mrp_runs" && <MrpPanel run={record} />}
@@ -303,9 +389,6 @@ export function RecordDetailPage() {
               <>
                 <QcWorkflowPanel
                   record={record}
-                  onUpdated={() => {
-                    toast.success("QC updated — refresh list if status looks stale");
-                  }}
                 />
                 {localPanels && <InspectionChecks qc={record} />}
               </>
@@ -344,7 +427,8 @@ export function RecordDetailPage() {
         confirmLabel={confirm === "reject" ? "Reject" : confirm === "cancel" ? "Cancel document" : confirm === "return" ? "Return" : "Reverse"}
         tone="destructive"
         onConfirm={async (reason) => {
-          if (confirm) await run(confirm, reason);
+          if (!confirm) return false;
+          return run(confirm, reason);
         }}
       />
     </>

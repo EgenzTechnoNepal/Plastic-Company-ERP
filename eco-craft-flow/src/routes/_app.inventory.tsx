@@ -5,8 +5,13 @@ import {
   AlertTriangle,
   ClipboardList,
   BookOpen,
+  PackageSearch,
+  ShieldCheck,
   Timer,
   ChartColumn,
+  Ruler,
+  Tags,
+  ReceiptText,
 } from "lucide-react";
 import { ModuleTabsLayout, type ModuleTab } from "@/components/layout/ModuleTabsLayout";
 
@@ -15,13 +20,42 @@ export const Route = createFileRoute("/_app/inventory")({
 });
 
 const TABS: readonly ModuleTab[] = [
-  { to: "/inventory/products", label: "Products", icon: Boxes, formKey: "product", formLabel: "New Product" },
+  {
+    to: "/inventory/products",
+    label: "Products",
+    icon: Boxes,
+    formKey: "product",
+    formLabel: "New Product",
+  },
+  { to: "/inventory/lots", label: "Lots", icon: PackageSearch },
+  { to: "/inventory/uom", label: "UOM", icon: Ruler },
+  { to: "/inventory/supplier-prices", label: "Supplier Prices", icon: Tags },
   { to: "/inventory/planning", label: "MOQ / Reorder", icon: ClipboardList },
-  { to: "/inventory/movements", label: "Movements", icon: ArrowLeftRight, formKey: "stockMovement", formLabel: "New Movement" },
+  {
+    to: "/inventory/landed-cost",
+    label: "Landed Cost",
+    icon: ReceiptText,
+    formKey: "landedCostDocument",
+    formLabel: "New Landed Cost",
+  },
+  {
+    to: "/inventory/movements",
+    label: "Movements",
+    icon: ArrowLeftRight,
+    formKey: "stockMovement",
+    formLabel: "New Movement",
+  },
   { to: "/inventory/ledger", label: "Ledger", icon: BookOpen },
+  { to: "/inventory/reservations", label: "Reservations", icon: ShieldCheck },
   { to: "/inventory/ageing", label: "Ageing", icon: Timer },
   { to: "/inventory/abc", label: "ABC", icon: ChartColumn },
-  { to: "/inventory/adjustments", label: "Adjustments", icon: ClipboardList, formKey: "stockAdjustment", formLabel: "New Adjustment" },
+  {
+    to: "/inventory/adjustments",
+    label: "Adjustments",
+    icon: ClipboardList,
+    formKey: "stockAdjustment",
+    formLabel: "New Adjustment",
+  },
   { to: "/inventory/alerts", label: "Alerts", icon: AlertTriangle },
 ];
 

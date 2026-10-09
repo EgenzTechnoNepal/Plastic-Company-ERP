@@ -1,9 +1,18 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { ErpRecord } from "@/types/erp";
 import {
   qcDisposeInspection,
@@ -25,6 +34,7 @@ function mapDto(dto: QCInspectionDto, prev: ErpRecord): ErpRecord {
       ncrReference: dto.ncr_reference ?? prev.fields.ncrReference,
       disposition: dto.fail_disposition ?? prev.fields.disposition,
       remarks: dto.remarks ?? prev.fields.remarks,
+      serverStatus: dto.status ?? prev.fields.serverStatus,
       typedId: dto.id,
     },
   };
@@ -39,30 +49,60 @@ export function QcWorkflowPanel({
   onUpdated?: (next: ErpRecord) => void;
 }) {
   const id = String(record.fields?.typedId ?? record.id);
+  const qc = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [coa, setCoa] = useState(String(record.fields?.coaReference ?? ""));
   const [coaUrl, setCoaUrl] = useState(String(record.fields?.coaAttachmentUrl ?? ""));
   const [remarks, setRemarks] = useState(String(record.fields?.remarks ?? ""));
+  const [failDisposition, setFailDisposition] = useState("QUARANTINED");
   const [disposeNote, setDisposeNote] = useState("");
   const [lastDispose, setLastDispose] = useState<DisposeResult | null>(null);
-  const status = String(record.status ?? "").toLowerCase();
-  const failed = status === "failed";
-  const done = status === "passed" || status === "failed";
+  const [confirmAction, setConfirmAction] = useState<"fail" | "return" | "scrap" | null>(null);
+  const status = String(record.fields?.serverStatus ?? record.status ?? "").toUpperCase();
+  const lotStatus = String(record.fields?.lotStatus ?? "");
+  const failed = status === "FAILED";
+  const canInspect = status === "DRAFT" && lotStatus === "QC_HOLD";
 
-  const run = async (fn: () => Promise<QCInspectionDto>, okMsg: string) => {
+  const stateMessage =
+    lotStatus === "QC_HOLD"
+      ? "Received - QC Hold - Not Available for Allocation"
+      : lotStatus === "AVAILABLE"
+        ? "QC Passed - Available"
+        : lotStatus === "QUARANTINED"
+          ? "QC Failed - Quarantined"
+          : lotStatus === "REJECTED"
+            ? "QC Failed - Rejected"
+            : lotStatus || "Backend lot state unavailable";
+
+  const refresh = (next: ErpRecord) => {
+    void qc.invalidateQueries({ queryKey: ["record", "qc_inspections", id] });
+    void qc.invalidateQueries({ queryKey: ["record", "qc_inspections", record.code] });
+    void qc.invalidateQueries({ queryKey: ["records", "qc_inspections"] });
+    void qc.invalidateQueries({ queryKey: ["records", "grns"] });
+    void qc.invalidateQueries({ queryKey: ["records", "batches"] });
+    void qc.invalidateQueries({ queryKey: ["records", "products"] });
+    void qc.invalidateQueries({ queryKey: ["records", "stock_movements"] });
+    void qc.invalidateQueries({ queryKey: ["dashboard-summary"] });
+    void qc.invalidateQueries({ queryKey: ["audit-logs"] });
+    onUpdated?.(next);
+  };
+
+  const run = async (fn: () => Promise<QCInspectionDto>, okMsg: string): Promise<boolean> => {
     setBusy(true);
     try {
       const dto = await fn();
       toast.success(okMsg);
-      onUpdated?.(mapDto(dto, record));
+      refresh(mapDto(dto, record));
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "QC action failed");
+      return false;
     } finally {
       setBusy(false);
     }
   };
 
-  const dispose = async (action: "RETURN" | "SCRAP") => {
+  const dispose = async (action: "RETURN" | "SCRAP"): Promise<boolean> => {
     setBusy(true);
     try {
       const result = await qcDisposeInspection(id, action, disposeNote);
@@ -81,8 +121,14 @@ export function QcWorkflowPanel({
           debitNote: result.debit_note,
         },
       });
+      void qc.invalidateQueries({ queryKey: ["record", "qc_inspections", id] });
+      void qc.invalidateQueries({ queryKey: ["records", "qc_inspections"] });
+      void qc.invalidateQueries({ queryKey: ["records", "grns"] });
+      void qc.invalidateQueries({ queryKey: ["records", "stock_movements"] });
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Dispose failed");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -93,10 +139,18 @@ export function QcWorkflowPanel({
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Incoming QC (Phase 3 + Wave 2)</CardTitle>
         <p className="text-xs text-muted-foreground">
-          CoA → Pass / Fail → then manager Return or Scrap (stock write-off)
+          GRN receipt creates QC hold stock. Only backend QC Pass releases the lot to Available.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2">
+          <p className="text-sm font-medium">{stateMessage}</p>
+          <p className="text-xs text-muted-foreground">
+            Inspection {status || "UNKNOWN"} · Lot {record.fields?.lotNumber ? String(record.fields.lotNumber) : String(record.fields?.lot ?? "—")}
+            {record.fields?.warehouse ? ` · Warehouse ${String(record.fields.warehouse)}` : ""}
+            {record.fields?.bin ? ` · Bin ${String(record.fields.bin)}` : ""}
+          </p>
+        </div>
         {record.fields?.ncrReference ? (
           <p className="rounded-lg bg-muted/40 px-3 py-2 text-sm">
             NCR: {String(record.fields.ncrReference)}
@@ -105,22 +159,22 @@ export function QcWorkflowPanel({
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label>CoA reference</Label>
-            <Input value={coa} onChange={(e) => setCoa(e.target.value)} disabled={busy || done} />
+            <Input value={coa} onChange={(e) => setCoa(e.target.value)} disabled={busy || !canInspect} />
           </div>
           <div className="space-y-1">
             <Label>CoA attachment URL</Label>
-            <Input value={coaUrl} onChange={(e) => setCoaUrl(e.target.value)} disabled={busy || done} />
+            <Input value={coaUrl} onChange={(e) => setCoaUrl(e.target.value)} disabled={busy || !canInspect} />
           </div>
         </div>
         <div className="space-y-1">
           <Label>Remarks</Label>
-          <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} disabled={busy || done} />
+          <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} disabled={busy || !canInspect} />
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
             size="sm"
             type="button"
-            disabled={busy || done}
+            disabled={busy || !canInspect}
             onClick={() =>
               run(
                 () =>
@@ -129,21 +183,32 @@ export function QcWorkflowPanel({
                     ...(coaUrl.trim() ? { coa_attachment_url: coaUrl.trim() } : {}),
                     remarks,
                   }),
-                "QC Pass — lot Available",
+                "QC Pass - lot released by backend",
               )
             }
           >
             Pass
           </Button>
-          <Button
-            size="sm"
-            type="button"
-            variant="destructive"
-            disabled={busy || done}
-            onClick={() => run(() => qcFailInspection(id, "QUARANTINED"), "QC Fail — Quarantine + NCR")}
-          >
-            Fail → Quarantine
-          </Button>
+          <div className="flex items-center gap-2">
+            <Select value={failDisposition} onValueChange={setFailDisposition} disabled={busy || !canInspect}>
+              <SelectTrigger className="h-8 w-40">
+                <SelectValue placeholder="Fail disposition" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="QUARANTINED">Quarantine</SelectItem>
+                <SelectItem value="REJECTED">Reject</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              type="button"
+              variant="destructive"
+              disabled={busy || !canInspect}
+              onClick={() => setConfirmAction("fail")}
+            >
+              Fail
+            </Button>
+          </div>
         </div>
 
         {failed ? (
@@ -162,7 +227,7 @@ export function QcWorkflowPanel({
                 size="sm"
                 type="button"
                 disabled={busy || Boolean(lastDispose)}
-                onClick={() => dispose("RETURN")}
+                onClick={() => setConfirmAction("return")}
               >
                 Return to vendor (PRT + DBN)
               </Button>
@@ -171,7 +236,7 @@ export function QcWorkflowPanel({
                 type="button"
                 variant="outline"
                 disabled={busy || Boolean(lastDispose)}
-                onClick={() => dispose("SCRAP")}
+                onClick={() => setConfirmAction("scrap")}
               >
                 Scrap / write-off
               </Button>
@@ -186,6 +251,41 @@ export function QcWorkflowPanel({
           </div>
         ) : null}
       </CardContent>
+      <ConfirmDialog
+        open={confirmAction !== null}
+        onOpenChange={(open) => !open && setConfirmAction(null)}
+        title={
+          confirmAction === "fail"
+            ? "Fail QC inspection"
+            : confirmAction === "return"
+              ? "Return failed lot to vendor"
+              : "Scrap failed lot"
+        }
+        description={
+          confirmAction === "fail"
+            ? `This will mark the inspection failed and set the lot disposition to ${failDisposition.toLowerCase()}.`
+            : "This action changes inventory through the backend and cannot be undone here."
+        }
+        confirmLabel={
+          confirmAction === "fail"
+            ? "Fail inspection"
+            : confirmAction === "return"
+              ? "Return to vendor"
+              : "Scrap lot"
+        }
+        tone="destructive"
+        onConfirm={() => {
+          if (confirmAction === "fail") {
+            return run(
+              () => qcFailInspection(id, failDisposition),
+              `QC Fail - ${failDisposition.toLowerCase()}`,
+            );
+          }
+          if (confirmAction === "return") return dispose("RETURN");
+          if (confirmAction === "scrap") return dispose("SCRAP");
+          return false;
+        }}
+      />
     </Card>
   );
 }

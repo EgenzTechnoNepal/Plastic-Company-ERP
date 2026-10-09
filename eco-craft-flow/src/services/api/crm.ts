@@ -5,7 +5,8 @@
 import { API_V1 } from "./endpoints";
 import { apiFetch, apiFetchMeta } from "./client";
 import type { DocStatus, ErpRecord } from "@/types/erp";
-import { organizationApi } from "./organization";
+import type { TypedListQuery } from "./m2Typed";
+import { resolveCompanyContextId } from "./companyContext";
 
 export const CRM_TYPED_API = {
   customers: `${API_V1}/crm/customer-masters/`,
@@ -71,6 +72,7 @@ export type ActivityDto = {
   status: string;
   due_at?: string | null;
   completed_at?: string | null;
+  actor?: string | null;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -84,7 +86,7 @@ export type ApprovalDto = {
   target_id: string;
   document_number: string;
   title: string;
-  status: string;
+  status: "DRAFT" | "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
   requested_by?: string | null;
   requested_by_email?: string;
   requested_at: string;
@@ -93,17 +95,20 @@ export type ApprovalDto = {
   decided_at?: string | null;
   comments?: string;
   decision_reason?: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
-let cachedCompanyId: string | null = null;
-
 export async function resolveDefaultCompanyId(): Promise<string> {
-  if (cachedCompanyId) return cachedCompanyId;
-  const companies = await organizationApi.companies();
-  const active = companies.find((c) => c.is_active) ?? companies[0];
-  if (!active) throw new Error("No company available for CRM create.");
-  cachedCompanyId = active.id;
-  return cachedCompanyId;
+  try {
+    return await resolveCompanyContextId();
+  } catch (error) {
+    if (error instanceof Error && error.message === "No company context available.") {
+      throw new Error("No company available for CRM create.");
+    }
+    throw error;
+  }
 }
 
 function unwrapList<T>(payload: unknown): T[] {
@@ -137,6 +142,8 @@ export function customerToErp(row: CustomerDto): ErpRecord {
       creditLimit: row.credit_limit ? Number(row.credit_limit) : undefined,
       paymentTerms: row.payment_terms,
       website: row.website,
+      country: row.country,
+      notes: row.notes,
       companyId: row.company,
       typedId: row.id,
     },
@@ -163,6 +170,7 @@ export function contactToErp(row: ContactDto): ErpRecord {
       phone: row.phone,
       alternatePhone: row.alternate_phone,
       preferredChannel: row.preferred_channel,
+      partyKind: row.party_kind,
       customer: row.customer,
       supplier: row.supplier,
       isPrimary: row.is_primary,
@@ -193,12 +201,19 @@ export function activityToErp(row: ActivityDto): ErpRecord {
     status: statusMap[row.status] ?? "open",
     fields: {
       subject: row.subject,
+      name: row.subject,
       type: row.activity_type,
+      activityType: row.activity_type,
       description: row.description,
+      outcome: row.description,
       customer: row.customer,
       supplier: row.supplier,
       contact: row.contact,
       dueAt: row.due_at,
+      dueDate: row.due_at?.slice(0, 10),
+      completedAt: row.completed_at,
+      owner: row.actor,
+      backendStatus: row.status,
       companyId: row.company,
       typedId: row.id,
     },
@@ -210,12 +225,63 @@ export function activityToErp(row: ActivityDto): ErpRecord {
   };
 }
 
-export async function listTypedCustomers(): Promise<ErpRecord[]> {
+function cleanQuery(query: TypedListQuery | undefined, allowed: Array<keyof TypedListQuery>) {
+  const out: Record<string, string | number | boolean> = { page_size: 200 };
+  if (!query) return out;
+  for (const key of allowed) {
+    const value = query[key];
+    if (value !== undefined && value !== "") out[key] = value as string | number | boolean;
+  }
+  return out;
+}
+
+function activityStatusToBackend(value: unknown): string {
+  const raw = String(value ?? "OPEN").toUpperCase();
+  if (raw === "COMPLETED") return "DONE";
+  if (raw === "CANCELLED") return "CANCELLED";
+  if (["OPEN", "DONE"].includes(raw)) return raw;
+  return "OPEN";
+}
+
+async function resolveCustomerRef(ref: unknown): Promise<string | null> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return null;
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const hit = (await listTypedCustomers()).find((row) => row.id === raw || row.code === raw || row.title === raw);
+  if (!hit) throw new Error(`Customer "${raw}" not found.`);
+  return hit.id;
+}
+
+async function resolveContactRef(ref: unknown): Promise<string | null> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return null;
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const hit = (await listTypedContacts()).find((row) => row.id === raw || row.code === raw || row.title === raw);
+  if (!hit) throw new Error(`Contact "${raw}" not found.`);
+  return hit.id;
+}
+
+async function resolveSupplierRef(ref: unknown): Promise<string | null> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return null;
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const { listTypedSuppliers } = await import("./m2Typed");
+  const hit = (await listTypedSuppliers()).find((row) => row.id === raw || row.code === raw || row.title === raw);
+  if (!hit) throw new Error(`Supplier "${raw}" not found.`);
+  return hit.id;
+}
+
+export async function listTypedCustomers(query?: TypedListQuery): Promise<ErpRecord[]> {
   const { data } = await apiFetchMeta<CustomerDto[] | { results: CustomerDto[] }>(CRM_TYPED_API.customers, {
-    query: { page_size: 200 },
+    query: cleanQuery(query, ["company", "search", "is_active", "customer_type"]),
     silent: true,
   });
   return unwrapList<CustomerDto>(data).map(customerToErp);
+}
+
+export async function getTypedCustomer(id: string): Promise<ErpRecord> {
+  const row = await apiFetch<CustomerDto>(`${CRM_TYPED_API.customers}${id}/`, { silent: true });
+  return customerToErp(row);
 }
 
 export async function createTypedCustomer( partial: Partial<ErpRecord>): Promise<ErpRecord> {
@@ -232,6 +298,7 @@ export async function createTypedCustomer( partial: Partial<ErpRecord>): Promise
     email: String(f.email || ""),
     address: String(f.address || ""),
     shipping_address: String(f.shippingAddress || ""),
+    country: String(f.country || f.city || ""),
     tax_id: String(f.pan || ""),
     payment_terms: f.creditDays != null ? `${f.creditDays} Days` : String(f.paymentTerms || ""),
     credit_limit: f.creditLimit != null ? String(f.creditLimit) : null,
@@ -253,8 +320,11 @@ export async function updateTypedCustomer(id: string, partial: Partial<ErpRecord
   if (f.email != null) body.email = f.email;
   if (f.address != null) body.address = f.address;
   if (f.shippingAddress != null) body.shipping_address = f.shippingAddress;
+  if (f.country != null || f.city != null) body.country = f.country ?? f.city;
   if (f.pan != null) body.tax_id = f.pan;
   if (f.creditLimit != null) body.credit_limit = String(f.creditLimit);
+  if (f.paymentTerms != null) body.payment_terms = f.paymentTerms;
+  if (f.notes != null) body.notes = f.notes;
   if (f.website != null) body.website = f.website;
   if (f.type != null) body.customer_type = String(f.type).toUpperCase().replace(/\s+/g, "_");
   if (partial.status === "inactive") body.is_active = false;
@@ -267,12 +337,17 @@ export async function updateTypedCustomer(id: string, partial: Partial<ErpRecord
   return customerToErp(row);
 }
 
-export async function listTypedContacts(): Promise<ErpRecord[]> {
+export async function listTypedContacts(query?: TypedListQuery): Promise<ErpRecord[]> {
   const { data } = await apiFetchMeta<ContactDto[] | { results: ContactDto[] }>(CRM_TYPED_API.contacts, {
-    query: { page_size: 200 },
+    query: cleanQuery(query, ["company", "customer", "supplier", "party_kind", "is_active", "search"]),
     silent: true,
   });
   return unwrapList<ContactDto>(data).map(contactToErp);
+}
+
+export async function getTypedContact(id: string): Promise<ErpRecord> {
+  const row = await apiFetch<ContactDto>(`${CRM_TYPED_API.contacts}${id}/`, { silent: true });
+  return contactToErp(row);
 }
 
 export async function createTypedContact(partial: Partial<ErpRecord>): Promise<ErpRecord> {
@@ -286,8 +361,9 @@ export async function createTypedContact(partial: Partial<ErpRecord>): Promise<E
     phone: String(f.phone || ""),
     alternate_phone: String(f.alternatePhone || ""),
     preferred_channel: String(f.preferredChannel || ""),
-    customer: f.customer || null,
-    supplier: f.supplier || null,
+    customer: await resolveCustomerRef(f.customer),
+    supplier: await resolveSupplierRef(f.supplier),
+    party_kind: String(f.partyKind || (f.supplier ? "SUPPLIER" : "CUSTOMER")),
     notes: String(f.notes || ""),
     is_primary: Boolean(f.isPrimary),
   };
@@ -302,6 +378,12 @@ export async function updateTypedContact(id: string, partial: Partial<ErpRecord>
   if (f.designation != null) body.designation = f.designation;
   if (f.email != null) body.email = f.email;
   if (f.phone != null) body.phone = f.phone;
+  if (f.alternatePhone != null) body.alternate_phone = f.alternatePhone;
+  if (f.preferredChannel != null) body.preferred_channel = f.preferredChannel;
+  if (f.customer != null) body.customer = await resolveCustomerRef(f.customer);
+  if (f.supplier != null) body.supplier = await resolveSupplierRef(f.supplier);
+  if (f.partyKind != null) body.party_kind = f.partyKind;
+  if (f.isPrimary != null) body.is_primary = Boolean(f.isPrimary);
   if (f.notes != null) body.notes = f.notes;
   if (partial.status === "inactive") body.is_active = false;
   if (partial.status === "active") body.is_active = true;
@@ -313,12 +395,17 @@ export async function updateTypedContact(id: string, partial: Partial<ErpRecord>
   return contactToErp(row);
 }
 
-export async function listTypedActivities(): Promise<ErpRecord[]> {
+export async function listTypedActivities(query?: TypedListQuery): Promise<ErpRecord[]> {
   const { data } = await apiFetchMeta<ActivityDto[] | { results: ActivityDto[] }>(CRM_TYPED_API.activities, {
-    query: { page_size: 200 },
+    query: cleanQuery(query, ["company", "customer", "supplier", "contact", "activity_type", "status", "search"]),
     silent: true,
   });
   return unwrapList<ActivityDto>(data).map(activityToErp);
+}
+
+export async function getTypedActivity(id: string): Promise<ErpRecord> {
+  const row = await apiFetch<ActivityDto>(`${CRM_TYPED_API.activities}${id}/`, { silent: true });
+  return activityToErp(row);
 }
 
 export async function createTypedActivity(partial: Partial<ErpRecord>): Promise<ErpRecord> {
@@ -330,20 +417,50 @@ export async function createTypedActivity(partial: Partial<ErpRecord>): Promise<
     subject: String(f.subject || partial.title || "Activity"),
     activity_type: ["NOTE", "CALL", "EMAIL", "MEETING", "TASK"].includes(type) ? type : "NOTE",
     description: String(f.description || ""),
-    customer: f.customer || null,
-    supplier: f.supplier || null,
-    contact: f.contact || null,
+    customer: await resolveCustomerRef(f.customer),
+    supplier: await resolveSupplierRef(f.supplier),
+    contact: await resolveContactRef(f.contact),
+    status: activityStatusToBackend(f.backendStatus || partial.status),
+    due_at: f.dueAt || f.dueDate || null,
   };
   const row = await apiFetch<ActivityDto>(CRM_TYPED_API.activities, { method: "POST", body, silent: true });
   return activityToErp(row);
 }
 
-export async function listTypedApprovals(status?: string): Promise<ApprovalDto[]> {
+export async function updateTypedActivity(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const f = partial.fields ?? {};
+  const body: Record<string, unknown> = {};
+  if (f.subject != null || f.name != null || partial.title != null) body.subject = f.subject ?? f.name ?? partial.title;
+  if (f.description != null || f.outcome != null) body.description = f.description ?? f.outcome;
+  if (f.type != null || f.activityType != null) body.activity_type = String(f.type ?? f.activityType).toUpperCase();
+  if (f.customer != null) body.customer = await resolveCustomerRef(f.customer);
+  if (f.supplier != null) body.supplier = await resolveSupplierRef(f.supplier);
+  if (f.contact != null) body.contact = await resolveContactRef(f.contact);
+  if (f.dueAt != null || f.dueDate != null) body.due_at = f.dueAt ?? f.dueDate;
+  if (partial.status != null || f.backendStatus != null) {
+    body.status = activityStatusToBackend(f.backendStatus ?? partial.status);
+  }
+  const row = await apiFetch<ActivityDto>(`${CRM_TYPED_API.activities}${id}/`, {
+    method: "PATCH",
+    body,
+    silent: true,
+  });
+  return activityToErp(row);
+}
+
+export async function listTypedApprovals(query: {
+  status?: ApprovalDto["status"];
+  search?: string;
+} = {}): Promise<ApprovalDto[]> {
   const { data } = await apiFetchMeta<ApprovalDto[] | { results: ApprovalDto[] }>(CRM_TYPED_API.approvals, {
-    query: status ? { page_size: 200, status } : { page_size: 200 },
+    query: { page_size: 200, ...query },
     silent: true,
   });
   return unwrapList<ApprovalDto>(data);
+}
+
+export async function getTypedApproval(id: string): Promise<ApprovalDto> {
+  return apiFetch<ApprovalDto>(`${CRM_TYPED_API.approvals}${id}/`, { silent: true });
 }
 
 export async function decideTypedApproval(

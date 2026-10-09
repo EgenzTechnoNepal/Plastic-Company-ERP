@@ -1,4 +1,4 @@
-"""CRM domain services — company isolation, audit, events."""
+"""CRM domain services â€” company isolation, audit, events."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from apps.core.exceptions import ERPError
 from apps.crm.models import (
     ActivityStatus,
     Contact,
+    ContactParty,
     CrmActivity,
     Customer,
     PartyAddress,
@@ -118,14 +119,50 @@ def deactivate_customer(*, customer: Customer, user=None) -> Customer:
     emit("CustomerUpdated", {"customer_id": str(customer.id), "code": customer.code, "deactivated": True})
     return customer
 
+def _validate_contact_party_relationship(*, party_kind, customer=None, supplier=None):
+    """
+    Ensure a contact's party kind is compatible with its linked party.
+
+    CUSTOMER contacts must belong to a customer only.
+    SUPPLIER contacts must belong to a supplier only.
+    OTHER contacts are intentionally not restricted because the Contact
+    model supports contacts linked to a customer and/or supplier.
+    """
+    if party_kind == ContactParty.CUSTOMER:
+        if customer is None or supplier is not None:
+            raise CrmError(
+                "Customer contacts must link to a customer and cannot link to a supplier.",
+                code="INVALID_PARTY_RELATIONSHIP",
+            )
+
+    elif party_kind == ContactParty.SUPPLIER:
+        if supplier is None or customer is not None:
+            raise CrmError(
+                "Supplier contacts must link to a supplier and cannot link to a customer.",
+                code="INVALID_PARTY_RELATIONSHIP",
+            )
+
 
 @transaction.atomic
-def create_contact(*, company, name: str, user=None, customer=None, supplier=None, **fields) -> Contact:
+def create_contact(
+    *, company, name: str, user=None, customer=None, supplier=None, **fields
+) -> Contact:
     assert_company_allowed(user, company.id)
+
     if customer is not None:
         assert_related_same_company(company.id, "customer", customer)
+
     if supplier is not None:
         assert_related_same_company(company.id, "supplier", supplier)
+
+    party_kind = fields.get("party_kind", ContactParty.CUSTOMER)
+
+    _validate_contact_party_relationship(
+        party_kind=party_kind,
+        customer=customer,
+        supplier=supplier,
+    )
+
     contact = Contact.objects.create(
         company=company,
         name=name,
@@ -135,33 +172,54 @@ def create_contact(*, company, name: str, user=None, customer=None, supplier=Non
         updated_by=user,
         **fields,
     )
+
     AuditService.log(
         user=user,
         action="create",
         module="crm",
         model_name="Contact",
         object_id=str(contact.id),
-        after_data={"name": contact.name, "customer_id": str(customer.id) if customer else None},
+        after_data={
+            "name": contact.name,
+            "customer_id": str(customer.id) if customer else None,
+        },
     )
+
     emit("ContactCreated", {"contact_id": str(contact.id), "name": contact.name})
     return contact
-
 
 @transaction.atomic
 def update_contact(*, contact: Contact, user=None, **fields) -> Contact:
     contact = Contact.objects.select_for_update().get(pk=contact.pk)
     assert_company_allowed(user, contact.company_id)
+
     if "customer" in fields and fields["customer"] is not None:
         assert_related_same_company(contact.company_id, "customer", fields["customer"])
+
     if "supplier" in fields and fields["supplier"] is not None:
         assert_related_same_company(contact.company_id, "supplier", fields["supplier"])
+
     if "company" in fields:
         raise CrmError("Cannot change contact company.", code="COMPANY_IMMUTABLE")
+
+    # Validate the complete resulting relationship before modifying the contact.
+    party_kind = fields["party_kind"] if "party_kind" in fields else contact.party_kind
+    customer = fields["customer"] if "customer" in fields else contact.customer
+    supplier = fields["supplier"] if "supplier" in fields else contact.supplier
+
+    _validate_contact_party_relationship(
+        party_kind=party_kind,
+        customer=customer,
+        supplier=supplier,
+    )
+
     for key, value in fields.items():
         if hasattr(contact, key) and key not in {"id", "company", "created_by", "created_at"}:
             setattr(contact, key, value)
+
     contact.updated_by = user
     contact.save()
+
     AuditService.log(
         user=user,
         action="update",
@@ -171,7 +229,6 @@ def update_contact(*, contact: Contact, user=None, **fields) -> Contact:
         after_data={"name": contact.name, "is_active": contact.is_active},
     )
     return contact
-
 
 @transaction.atomic
 def create_party_address(
@@ -213,8 +270,18 @@ def create_activity(
         assert_related_same_company(company.id, "supplier", supplier)
     if contact is not None:
         assert_related_same_company(company.id, "contact", contact)
+
         if contact.customer_id and customer and contact.customer_id != customer.id:
-            raise CrmError("Contact does not belong to the given customer.", code="CONTACT_MISMATCH")
+            raise CrmError(
+                "Contact does not belong to the given customer.",
+                code="CONTACT_MISMATCH",
+            )
+
+        if contact.supplier_id and supplier and contact.supplier_id != supplier.id:
+            raise CrmError(
+                "Contact does not belong to the given supplier.",
+                code="CONTACT_MISMATCH",
+            )
     activity = CrmActivity.objects.create(
         company=company,
         subject=subject,
@@ -256,7 +323,7 @@ def complete_activity(*, activity: CrmActivity, user=None) -> CrmActivity:
 
 @transaction.atomic
 def update_supplier_master(*, supplier: Supplier, user=None, **fields) -> Supplier:
-    """CRM-facing supplier update — same typed Supplier identity as procurement."""
+    """CRM-facing supplier update â€” same typed Supplier identity as procurement."""
     supplier = Supplier.objects.select_for_update().get(pk=supplier.pk)
     assert_company_allowed(user, supplier.company_id)
     if "company" in fields:

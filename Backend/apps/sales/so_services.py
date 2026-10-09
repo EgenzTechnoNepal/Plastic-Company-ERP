@@ -77,7 +77,7 @@ def confirm_sales_order(*, sales_order: SalesOrder, user=None) -> SalesOrder:
     Uses Phase 2 reserve_stock — never DomainRecord products.reserved.
     """
     so = (
-        SalesOrder.objects.select_for_update()
+        SalesOrder.objects.select_for_update(of=("self",))
         .select_related("customer", "company", "warehouse")
         .prefetch_related("lines")
         .get(pk=sales_order.pk)

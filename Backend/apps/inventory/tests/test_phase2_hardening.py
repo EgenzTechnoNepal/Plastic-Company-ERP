@@ -1,14 +1,17 @@
 """
-Phase 2 hardening — inventory integrity regression tests.
+Phase 2 hardening â€” inventory integrity regression tests.
 
 Covers multi-layer reservations, partial putaway/transfer, explicit-layer
 adjustment, ledger reconciliation, landed-cost late adjustments, company
 isolation at the service layer, and deterministic locking behavior.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 
-from django.test import TestCase, TransactionTestCase
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -20,16 +23,19 @@ from apps.inventory.ledger import (
     StockTxnType,
 )
 from apps.inventory.models import (
+    AllocationBasis,
     Item,
     ItemType,
     InventoryLot,
     InventoryReceiptLayer,
+    LandedCostAllocation,
     LandedCostCategory,
     LandedCostDocument,
+    LandedCostDocumentStatus,
     LotStatus,
     UnitOfMeasure,
 )
-from apps.inventory.services import create_landed_component
+from apps.inventory.services import LandedCostError, create_landed_component
 from apps.inventory.stock_services import (
     ReservationError,
     compute_balances,
@@ -749,7 +755,7 @@ class LandedCostHardeningTests(HardeningBase):
         self.assertEqual(layer.purchase_unit_cost, Decimal("1000.000000"))
         self.assertEqual(layer.landed_unit_cost, Decimal("1150.000000"))
 
-        # Third adjustment — cumulative again
+        # Third adjustment â€” cumulative again
         doc3 = LandedCostDocument.objects.create(
             company=self.company,
             document_number="LC-H3",
@@ -924,7 +930,7 @@ class ConcurrencyLockingTests(TransactionTestCase):
             user=self.user,
         )
         self.assertEqual(res.allocations.count(), 1)
-        # Only 40 free — issuing 50 must fail
+        # Only 40 free â€” issuing 50 must fail
         with self.assertRaises(InsufficientStockError):
             fifo_issue(
                 company=self.company,
@@ -966,7 +972,7 @@ class ConcurrencyLockingTests(TransactionTestCase):
             post_putaway(putaway=putaway, user=self.user)
 
     def test_second_reservation_fails_after_first_takes_most_atc(self):
-        """100 available → reserve 80 → reserve 30 must fail (only 20 free)."""
+        """100 available â†’ reserve 80 â†’ reserve 30 must fail (only 20 free)."""
         reserve_stock(
             company=self.company,
             item=self.item,
@@ -985,6 +991,97 @@ class ConcurrencyLockingTests(TransactionTestCase):
         self.assertEqual(ctx.exception.code, "INSUFFICIENT_ATC")
         layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-C")
         self.assertEqual(layer.reserved_quantity, Decimal("80.000000"))
+
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_simultaneous_reservation_and_fifo_issue_cannot_overconsume(self):
+        """A reservation and an issue cannot consume the same free stock concurrently."""
+        barrier = Barrier(2)
+        company_id = self.company.id
+        item_id = self.item.id
+        uom_id = self.kg.id
+        user_id = self.user.id
+
+        def reserve():
+            close_old_connections()
+            try:
+                company = Company.objects.get(pk=company_id)
+                item = Item.objects.get(pk=item_id)
+                uom = UnitOfMeasure.objects.get(pk=uom_id)
+                user = User.objects.get(pk=user_id)
+                barrier.wait(timeout=10)
+                try:
+                    reservation = reserve_stock(
+                        company=company,
+                        item=item,
+                        quantity=Decimal("60"),
+                        uom=uom,
+                        user=user,
+                    )
+                except ReservationError as exc:
+                    return "rejected", exc.code
+                return "reserved", str(reservation.id)
+            finally:
+                close_old_connections()
+
+        def issue():
+            close_old_connections()
+            try:
+                company = Company.objects.get(pk=company_id)
+                item = Item.objects.get(pk=item_id)
+                uom = UnitOfMeasure.objects.get(pk=uom_id)
+                user = User.objects.get(pk=user_id)
+                barrier.wait(timeout=10)
+                try:
+                    entries = fifo_issue(
+                        company=company,
+                        item=item,
+                        quantity=Decimal("60"),
+                        uom=uom,
+                        user=user,
+                    )
+                except InsufficientStockError:
+                    return "rejected", None
+                return "issued", [str(entry.id) for entry in entries]
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            reserve_future = executor.submit(reserve)
+            issue_future = executor.submit(issue)
+            reserve_result = reserve_future.result(timeout=30)
+            issue_result = issue_future.result(timeout=30)
+
+        reservation_won = reserve_result[0] == "reserved"
+        issue_won = issue_result[0] == "issued"
+        self.assertNotEqual(reservation_won, issue_won)
+
+        layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-C")
+        layer.refresh_from_db()
+        self.assertGreaterEqual(layer.remaining_quantity, Decimal("0"))
+        self.assertGreaterEqual(layer.reserved_quantity, Decimal("0"))
+
+        if reservation_won:
+            self.assertEqual(layer.remaining_quantity, Decimal("100.000000"))
+            self.assertEqual(layer.reserved_quantity, Decimal("60.000000"))
+            self.assertEqual(StockLedgerEntry.objects.filter(txn_type=StockTxnType.ISSUE).count(), 0)
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(txn_type=StockTxnType.RESERVATION).count(),
+                1,
+            )
+        else:
+            self.assertEqual(layer.remaining_quantity, Decimal("40.000000"))
+            self.assertEqual(layer.reserved_quantity, Decimal("0.000000"))
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(
+                    txn_type=StockTxnType.ISSUE,
+                    receipt_layer=layer,
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(txn_type=StockTxnType.RESERVATION).count(),
+                0,
+            )
 
 
 class ExplicitLayerValidationTests(HardeningBase):
@@ -1162,3 +1259,229 @@ class AdjustmentLocationValidationTests(HardeningBase):
         with self.assertRaises(WarehouseOpsError) as ctx:
             post_adjustment(adjustment=adj, user=self.user)
         self.assertEqual(ctx.exception.code, "LAYER_BIN_MISMATCH")
+
+
+class LandedCostAllocationBasisTests(HardeningBase):
+    """
+    GAP-1: Verify non-default allocation bases are persisted on the allocation
+    record and that landed-cost math (purchase_unit_cost preserved, landed_unit_cost
+    computed from purchase + component) is correct regardless of basis.
+    """
+
+    def _post_with_basis(self, basis):
+        lot = self._available_lot(100, 1000, f"AB-{basis[:3]}")
+        doc = LandedCostDocument.objects.create(
+            company=self.company,
+            document_number=f"LC-AB-{basis[:3]}",
+            lot=lot,
+            currency=self.npr,
+            purchase_quantity=Decimal("100"),
+            purchase_unit_cost=Decimal("1000"),
+            purchase_value=Decimal("100000"),
+        )
+        create_landed_component(
+            doc,
+            category=LandedCostCategory.CLEARING,
+            amount=Decimal("10000"),
+            currency=self.npr,
+            exchange_rate=Decimal("1"),
+            allocation_basis=basis,
+        )
+        result = post_landed_cost(document=doc, user=self.user)
+        return doc, lot, result
+
+    def test_quantity_allocation_basis(self):
+        doc, lot, result = self._post_with_basis(AllocationBasis.QUANTITY)
+        self.assertEqual(result["landed_unit_cost"], "1100.000000")
+        lot.refresh_from_db()
+        self.assertEqual(lot.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(lot.landed_unit_cost, Decimal("1100"))
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        self.assertEqual(layer.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(layer.landed_unit_cost, Decimal("1100"))
+        alloc = LandedCostAllocation.objects.get(document=doc)
+        self.assertEqual(alloc.allocation_basis, AllocationBasis.QUANTITY)
+        self.assertEqual(alloc.basis_value, Decimal("100"))
+        self.assertEqual(alloc.allocated_amount, Decimal("10000"))
+
+    def test_weight_allocation_basis(self):
+        doc, lot, result = self._post_with_basis(AllocationBasis.WEIGHT)
+        self.assertEqual(result["landed_unit_cost"], "1100.000000")
+        alloc = LandedCostAllocation.objects.get(document=doc)
+        self.assertEqual(alloc.allocation_basis, AllocationBasis.WEIGHT)
+        self.assertEqual(alloc.basis_value, Decimal("100"))
+        self.assertEqual(alloc.allocated_amount, Decimal("10000"))
+
+    def test_volume_allocation_basis(self):
+        doc, lot, result = self._post_with_basis(AllocationBasis.VOLUME)
+        self.assertEqual(result["landed_unit_cost"], "1100.000000")
+        alloc = LandedCostAllocation.objects.get(document=doc)
+        self.assertEqual(alloc.allocation_basis, AllocationBasis.VOLUME)
+        self.assertEqual(alloc.basis_value, Decimal("100"))
+        self.assertEqual(alloc.allocated_amount, Decimal("10000"))
+
+    def test_equal_allocation_basis(self):
+        doc, lot, result = self._post_with_basis(AllocationBasis.EQUAL)
+        self.assertEqual(result["landed_unit_cost"], "1100.000000")
+        alloc = LandedCostAllocation.objects.get(document=doc)
+        self.assertEqual(alloc.allocation_basis, AllocationBasis.EQUAL)
+        self.assertEqual(alloc.basis_value, Decimal("100"))
+        self.assertEqual(alloc.allocated_amount, Decimal("10000"))
+
+    def test_manual_allocation_basis(self):
+        doc, lot, result = self._post_with_basis(AllocationBasis.MANUAL)
+        self.assertEqual(result["landed_unit_cost"], "1100.000000")
+        alloc = LandedCostAllocation.objects.get(document=doc)
+        self.assertEqual(alloc.allocation_basis, AllocationBasis.MANUAL)
+        self.assertEqual(alloc.basis_value, Decimal("100"))
+        self.assertEqual(alloc.allocated_amount, Decimal("10000"))
+
+class LandedCostAllCategoriesTests(HardeningBase):
+    """
+    Verify that all 12 required landed-cost categories are represented:
+    MATERIAL through purchase value, and the remaining 11 as landed-cost
+    components contributing to the landed total.
+    """
+
+    def test_all_required_landed_cost_categories_contribute_to_total(self):
+        lot = self._available_lot(100, 1000, "ALL-CAT")
+
+        doc = LandedCostDocument.objects.create(
+            company=self.company,
+            document_number="LC-ALL-CAT",
+            lot=lot,
+            currency=self.npr,
+            purchase_quantity=Decimal("100"),
+            purchase_unit_cost=Decimal("1000"),
+            purchase_value=Decimal("100000"),
+        )
+
+        categories = [
+            (LandedCostCategory.INTERNATIONAL_FREIGHT, Decimal("2000")),
+            (LandedCostCategory.INSURANCE, Decimal("3000")),
+            (LandedCostCategory.CUSTOMS_DUTY, Decimal("4000")),
+            (LandedCostCategory.CUSTOMS_TAX, Decimal("5000")),
+            (LandedCostCategory.VAT, Decimal("6000")),
+            (LandedCostCategory.CLEARING, Decimal("7000")),
+            (LandedCostCategory.PORT_HANDLING, Decimal("8000")),
+            (LandedCostCategory.NEPAL_TRANSPORT, Decimal("9000")),
+            (LandedCostCategory.LOCAL_HANDLING, Decimal("10000")),
+            (LandedCostCategory.BANK_CHARGES, Decimal("11000")),
+            (LandedCostCategory.OTHER_DIRECT_COST, Decimal("12000")),
+        ]
+
+        for category, amount in categories:
+            create_landed_component(
+                doc,
+                category=category,
+                amount=amount,
+                currency=self.npr,
+                exchange_rate=Decimal("1"),
+                allocation_basis=AllocationBasis.VALUE,
+            )
+
+        result = post_landed_cost(document=doc, user=self.user)
+
+        # Purchase value = 100 Ã— 1,000 = 100,000
+        # MATERIAL is represented by purchase value:
+        # 100 Ã— 1,000 = 100,000.
+        # Additional costs = 2,000 + 3,000 + ... + 12,000 = 77,000.
+        # Landed total = 177,000.
+        # Landed unit cost = 177,000 / 100 = 1,770.
+        self.assertEqual(Decimal(result["purchase_value"]), Decimal("100000.0000"))
+        self.assertEqual(Decimal(result["additional_costs_total"]), Decimal("77000.0000"))
+        self.assertEqual(Decimal(result["landed_total"]), Decimal("177000.0000"))
+        self.assertEqual(Decimal(result["landed_unit_cost"]), Decimal("1770.000000"))
+
+        # All 11 additional-cost categories are persisted as components.
+        self.assertEqual(doc.components.count(), 11)
+
+        persisted_categories = set(
+            doc.components.values_list("category", flat=True)
+        )
+
+        expected_categories = {category for category, _ in categories}
+
+        self.assertEqual(persisted_categories, expected_categories)
+
+        # Every component must have contributed its base-currency amount.
+        total_components = sum(
+            (
+                component.base_currency_amount
+                for component in doc.components.all()
+            ),
+            Decimal("0"),
+        )
+        self.assertEqual(total_components, Decimal("77000.0000"))
+
+        # Original purchase cost remains separate from landed cost.
+        lot.refresh_from_db()
+        self.assertEqual(lot.purchase_unit_cost, Decimal("1000.000000"))
+        self.assertEqual(lot.landed_unit_cost, Decimal("1770.000000"))
+
+
+class LandedCostDuplicatePostTests(HardeningBase):
+    """
+    GAP-2: Verify that re-posting an already-posted LandedCostDocument raises
+    LandedCostError(code='DUPLICATE_POST') with no side effects.
+    """
+
+    def test_duplicate_post_rejected_no_side_effects(self):
+        lot = self._available_lot(100, 1000, "DUP")
+        doc = LandedCostDocument.objects.create(
+            company=self.company,
+            document_number="LC-DUP",
+            lot=lot,
+            currency=self.npr,
+            purchase_quantity=Decimal("100"),
+            purchase_unit_cost=Decimal("1000"),
+            purchase_value=Decimal("100000"),
+        )
+        create_landed_component(
+            doc,
+            category=LandedCostCategory.CUSTOMS_DUTY,
+            amount=Decimal("5000"),
+            currency=self.npr,
+            exchange_rate=Decimal("1"),
+        )
+
+        result = post_landed_cost(document=doc, user=self.user)
+        self.assertEqual(result["landed_unit_cost"], "1050.000000")
+
+        lot.refresh_from_db()
+        self.assertEqual(lot.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(lot.landed_unit_cost, Decimal("1050"))
+        layer = InventoryReceiptLayer.objects.get(lot=lot)
+        self.assertEqual(layer.landed_unit_cost, Decimal("1050"))
+
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, LandedCostDocumentStatus.POSTED)
+        alloc_count = doc.allocations.count()
+        ledger_count = StockLedgerEntry.objects.filter(
+            txn_type=StockTxnType.LANDED_COST_REVALUE, reference_id=doc.id
+        ).count()
+
+        with self.assertRaises(LandedCostError) as ctx:
+            post_landed_cost(document=doc, user=self.user)
+        self.assertEqual(ctx.exception.code, "DUPLICATE_POST")
+
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, LandedCostDocumentStatus.POSTED)
+
+        self.assertEqual(
+            doc.allocations.count(),
+            alloc_count,
+        )
+        self.assertEqual(
+            StockLedgerEntry.objects.filter(
+                txn_type=StockTxnType.LANDED_COST_REVALUE, reference_id=doc.id
+            ).count(),
+            ledger_count,
+        )
+
+        lot.refresh_from_db()
+        self.assertEqual(lot.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(lot.landed_unit_cost, Decimal("1050"))
+        layer.refresh_from_db()
+        self.assertEqual(layer.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(layer.landed_unit_cost, Decimal("1050"))

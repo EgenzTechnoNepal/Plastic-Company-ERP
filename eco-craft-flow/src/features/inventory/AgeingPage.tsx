@@ -7,8 +7,10 @@ import { recordPath } from "@/features/registry/paths";
 import { npr } from "@/lib/export";
 import { num, searchRecord, stockValue, str } from "@/lib/records";
 import { useRecords } from "@/services/entityService";
+import { useAuthStore } from "@/store/auth";
+import { BackendAggregateUnavailable } from "./BackendAggregateUnavailable";
 
-export function AgeingPage() {
+function LegacyAgeingPage() {
   const products = useRecords("products");
   const movements = useRecords("stock_movements");
   const rows = products.map((p) => {
@@ -52,4 +54,19 @@ export function AgeingPage() {
       />
     </div>
   );
+}
+
+export function AgeingPage() {
+  const live = useAuthStore((state) =>
+    state.source === "api" && state.token !== null && !state.token.startsWith("mock."),
+  );
+  if (live) {
+    return (
+      <BackendAggregateUnavailable
+        title="Inventory ageing"
+        description="The current backend does not provide a complete inventory movement and balance aggregate for reliable ageing analysis."
+      />
+    );
+  }
+  return <LegacyAgeingPage />;
 }

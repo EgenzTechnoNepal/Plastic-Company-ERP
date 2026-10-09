@@ -7,8 +7,10 @@ import { recordPath } from "@/features/registry/paths";
 import { npr } from "@/lib/export";
 import { num, searchRecord } from "@/lib/records";
 import { useRecords } from "@/services/entityService";
+import { useAuthStore } from "@/store/auth";
+import { BackendAggregateUnavailable } from "./BackendAggregateUnavailable";
 
-export function AbcPage() {
+function LegacyAbcPage() {
   const products = useRecords("products");
   const rows = abcAnalysis(products);
   const total = rows.reduce((s, r) => s + r.value, 0);
@@ -47,4 +49,19 @@ export function AbcPage() {
       />
     </div>
   );
+}
+
+export function AbcPage() {
+  const live = useAuthStore((state) =>
+    state.source === "api" && state.token !== null && !state.token.startsWith("mock."),
+  );
+  if (live) {
+    return (
+      <BackendAggregateUnavailable
+        title="ABC inventory analysis"
+        description="The current backend does not provide authoritative inventory values for global ABC classification."
+      />
+    );
+  }
+  return <LegacyAbcPage />;
 }

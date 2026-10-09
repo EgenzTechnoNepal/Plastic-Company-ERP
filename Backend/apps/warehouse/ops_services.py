@@ -47,7 +47,7 @@ def _layers_for_move(lot, *, from_warehouse=None, from_bin=None, qty_needed: Dec
 
 @transaction.atomic
 def post_putaway(*, putaway: PutawayOrder, user=None) -> PutawayOrder:
-    putaway = PutawayOrder.objects.select_for_update().select_related(
+    putaway = PutawayOrder.objects.select_for_update(of=("self",)).select_related(
         "lot", "to_bin", "to_bin__warehouse", "to_warehouse", "from_bin", "from_bin__warehouse", "company"
     ).get(pk=putaway.pk)
     assert_company_allowed(user, putaway.company_id)
@@ -297,7 +297,7 @@ def post_transfer(*, transfer: StockTransfer, user=None) -> StockTransfer:
 
 @transaction.atomic
 def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustment:
-    adjustment = StockAdjustment.objects.select_for_update().select_related(
+    adjustment = StockAdjustment.objects.select_for_update(of=("self",)).select_related(
         "item", "lot", "receipt_layer", "receipt_layer__warehouse", "receipt_layer__bin", "company",
         "warehouse", "bin",
     ).get(pk=adjustment.pk)
@@ -316,7 +316,7 @@ def post_adjustment(*, adjustment: StockAdjustment, user=None) -> StockAdjustmen
             "receipt_layer is required — multi-layer lots cannot silently adjust the first layer.",
             code="LAYER_REQUIRED",
         )
-    layer = InventoryReceiptLayer.objects.select_for_update().select_related(
+    layer = InventoryReceiptLayer.objects.select_for_update(of=("self",)).select_related(
         "lot", "item", "warehouse", "bin"
     ).get(pk=adjustment.receipt_layer_id)
     if layer.lot_id != lot.id:

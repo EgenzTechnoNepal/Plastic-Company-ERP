@@ -294,6 +294,31 @@ export const FORM_DEFINITIONS: Record<string, FormDefinition> = {
     ],
   },
 
+  shipment: {
+    key: "shipment",
+    title: "New Shipment",
+    description: "Import shipment linked to supplier and, optionally, a Purchase Order.",
+    submitLabel: "Create shipment",
+    endpoint: "POST /api/v1/purchase/import-shipments/",
+    sections: [
+      {
+        title: "Shipment",
+        fields: [
+          { name: "shipmentNumber", label: "Shipment number", type: "text", required: true },
+          { name: "supplier", label: "Supplier", type: "text", required: true },
+          { name: "purchaseOrder", label: "Purchase Order", type: "text" },
+          { name: "purchaseReference", label: "Purchase reference", type: "text" },
+          { name: "incoterm", label: "Incoterm", type: "text" },
+          { name: "namedPlace", label: "Named place", type: "text" },
+          { name: "etd", label: "ETD", type: "date" },
+          { name: "eta", label: "ETA", type: "date" },
+          { name: "isActive", label: "Active", type: "switch", defaultValue: true },
+          { name: "notes", label: "Notes", type: "textarea", colSpan: 2 },
+        ],
+      },
+    ],
+  },
+
   purchaseReturn: {
     key: "purchaseReturn",
     title: "New Purchase Return",

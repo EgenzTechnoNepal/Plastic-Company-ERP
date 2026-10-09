@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AlertTriangle, Boxes, IndianRupee, Layers } from "lucide-react";
+import { Boxes, CheckCircle2, Layers, ShieldCheck } from "lucide-react";
 import { EntityListPage } from "@/components/common/EntityListPage";
-import { npr } from "@/lib/export";
-import { isLowStock, stockValue, str } from "@/lib/records";
+import { str } from "@/lib/records";
 
 export const Route = createFileRoute("/_app/inventory/products")({
   component: ProductsPage,
@@ -25,9 +24,9 @@ function ProductsPage() {
       ]}
       kpis={(rows) => [
         { label: "SKUs", value: rows.length, icon: Boxes },
-        { label: "Stock Value", value: npr(rows.reduce((s, r) => s + stockValue(r), 0)), icon: IndianRupee },
-        { label: "Low Stock", value: rows.filter(isLowStock).length, icon: AlertTriangle, accent: "muted" },
-        { label: "Finished Goods", value: rows.filter((r) => str(r, "type") === "Finished Good").length, icon: Layers, accent: "accent" },
+        { label: "Active", value: rows.filter((r) => r.status === "active").length, icon: CheckCircle2, accent: "accent" },
+        { label: "QC required", value: rows.filter((r) => Boolean(r.fields.qcRequired)).length, icon: ShieldCheck, accent: "secondary" },
+        { label: "Finished Goods", value: rows.filter((r) => ["Finished Good", "FINISHED_GOOD"].includes(str(r, "type"))).length, icon: Layers, accent: "accent" },
       ]}
     />
   );

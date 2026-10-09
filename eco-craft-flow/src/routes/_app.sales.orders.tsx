@@ -1,8 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { CheckCircle2, ClipboardList, Clock, IndianRupee } from "lucide-react";
+import { CheckCircle2, ClipboardList, Clock, PackageCheck } from "lucide-react";
 import { EntityListPage } from "@/components/common/EntityListPage";
-import { npr } from "@/lib/export";
-import { recordTotal } from "@/services/entityService";
+import { num } from "@/lib/records";
 
 export const Route = createFileRoute("/_app/sales/orders")({
   component: SalesOrdersPage,
@@ -14,7 +13,7 @@ function SalesOrdersPage() {
       entity="sales_orders"
       kpis={(rows) => [
         { label: "Orders", value: rows.length, icon: ClipboardList },
-        { label: "Order Value", value: npr(rows.reduce((s, r) => s + recordTotal(r), 0)), icon: IndianRupee },
+        { label: "Reserved Qty", value: rows.reduce((s, r) => s + num(r, "reservedQuantity"), 0).toLocaleString("en-IN"), icon: PackageCheck },
         { label: "In Progress", value: rows.filter((r) => r.status === "in_progress").length, icon: Clock, accent: "secondary" },
         { label: "Completed", value: rows.filter((r) => r.status === "completed").length, icon: CheckCircle2, accent: "accent" },
       ]}

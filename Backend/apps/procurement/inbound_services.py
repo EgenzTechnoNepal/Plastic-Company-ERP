@@ -93,11 +93,11 @@ def _validate_po_line_for_grn(*, grn: GoodsReceiptNote, line: GoodsReceiptLine, 
     from apps.procurement.commercial import PurchaseOrder, PurchaseOrderLine
 
     pol = (
-        PurchaseOrderLine.objects.select_for_update()
+        PurchaseOrderLine.objects.select_for_update(of=("self",))
         .select_related("purchase_order", "purchase_order__supplier", "item", "uom")
         .get(pk=line.purchase_order_line_id)
     )
-    po: PurchaseOrder = PurchaseOrder.objects.select_for_update().select_related("supplier").get(
+    po: PurchaseOrder = PurchaseOrder.objects.select_for_update(of=("self",)).select_related("supplier").get(
         pk=pol.purchase_order_id
     )
 
@@ -141,7 +141,7 @@ def _validate_po_line_for_grn(*, grn: GoodsReceiptNote, line: GoodsReceiptLine, 
 @transaction.atomic
 def submit_gate_entry(*, gate: GateEntry, user=None) -> GateEntry:
     gate = (
-        GateEntry.objects.select_for_update()
+        GateEntry.objects.select_for_update(of=("self",))
         .select_related("purchase_order", "shipment", "shipment__purchase_order")
         .get(pk=gate.pk)
     )
@@ -164,8 +164,10 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     Idempotent: re-post of already POSTED raises.
     Does NOT create AVAILABLE stock when item.qc_required.
     """
+
     grn = (
-        GoodsReceiptNote.objects.select_for_update()
+        GoodsReceiptNote.objects
+        .select_for_update(of=("self",))
         .select_related(
             "company",
             "supplier",
@@ -178,7 +180,11 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             "shipment",
             "shipment__purchase_order",
         )
-        .prefetch_related("lines__item", "lines__uom", "lines__purchase_order_line")
+        .prefetch_related(
+            "lines__item",
+            "lines__uom",
+            "lines__purchase_order_line",
+        )
         .get(pk=grn.pk)
     )
     assert_company_allowed(user, grn.company_id)
@@ -191,6 +197,11 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
 
     assert_related_same_company(grn.company_id, "supplier", grn.supplier)
     assert_related_same_company(grn.company_id, "warehouse", grn.warehouse)
+    if grn.receiving_bin is not None and grn.receiving_bin.warehouse_id != grn.warehouse_id:
+        raise InboundError(
+            "Receiving bin does not belong to the GRN warehouse.",
+            code="BIN_WAREHOUSE_MISMATCH",
+        )
 
     lines = list(
         grn.lines.select_related("item", "uom", "purchase_order_line", "purchase_order_line__purchase_order").all()
@@ -315,7 +326,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
             )
 
     if grn.gate_entry_id:
-        gate = GateEntry.objects.select_for_update().get(pk=grn.gate_entry_id)
+        gate = GateEntry.objects.select_for_update(of=("self",)).get(pk=grn.gate_entry_id)
         if gate.status == GateEntryStatus.SUBMITTED:
             _transition_gate(gate, GateEntryStatus.LINKED_TO_GRN)
         elif gate.status == GateEntryStatus.DRAFT:

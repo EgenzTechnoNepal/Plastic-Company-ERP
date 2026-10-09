@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Users, Target, FileText, Handshake, Contact, Briefcase, CalendarClock, MapPin, LifeBuoy } from "lucide-react";
+import { Users, Target, FileText, Handshake, Contact, Briefcase, CalendarClock, MapPin, LifeBuoy, Building2 } from "lucide-react";
 import { ModuleTabsLayout, type ModuleTab } from "@/components/layout/ModuleTabsLayout";
 
 export const Route = createFileRoute("/_app/crm")({
@@ -7,6 +7,7 @@ export const Route = createFileRoute("/_app/crm")({
 });
 
 const TABS: readonly ModuleTab[] = [
+  { to: "/purchase/suppliers", label: "Suppliers", icon: Building2, formKey: "supplier", formLabel: "New Supplier" },
   { to: "/crm/customers", label: "Customers", icon: Users, formKey: "customer", formLabel: "New Customer" },
   { to: "/crm/contacts", label: "Contacts", icon: Contact, formKey: "contact", formLabel: "New Contact" },
   { to: "/crm/leads", label: "Leads", icon: Target, formKey: "lead", formLabel: "New Lead" },

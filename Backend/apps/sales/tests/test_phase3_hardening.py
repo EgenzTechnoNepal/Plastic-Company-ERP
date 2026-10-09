@@ -289,6 +289,40 @@ class InvoiceHardeningTests(SalesHardeningBase):
             )
         self.assertEqual(ctx.exception.code, "OVER_INVOICE")
 
+    def test_invoice_cannot_exceed_quantity_on_linked_dispatch(self):
+        so, line = self._confirmed_so("10")
+        dispatch = create_dispatch_note(sales_order=so, user=self.user)
+        add_dispatch_line(
+            dispatch=dispatch,
+            sales_order_line=line,
+            quantity=Decimal("4"),
+            user=self.user,
+        )
+        post_dispatch(dispatch=dispatch, user=self.user)
+
+        invoice = create_sales_invoice(
+            company=self.company,
+            customer=self.customer,
+            user=self.user,
+            sales_order=so,
+            dispatch_note=dispatch,
+        )
+        with self.assertRaises(SalesInvoiceError):
+            add_invoice_line(
+                invoice=invoice,
+                item=self.item,
+                uom=self.kg,
+                quantity=Decimal("5"),
+                unit_price=Decimal("25"),
+                user=self.user,
+                sales_order_line=line,
+            )
+
+        line.refresh_from_db()
+        self.assertEqual(line.dispatched_quantity, Decimal("4"))
+        self.assertEqual(line.invoiced_quantity, Decimal("0"))
+        self.assertFalse(invoice.lines.exists())
+
     def test_invoice_no_stock_no_gl(self):
         so, line, dn = self._dispatched("10")
         ledger_before = StockLedgerEntry.objects.count()
