@@ -20,6 +20,8 @@ import { downloadDoc, downloadPdfHtml, downloadXls, rowsToHtmlTable } from "@/li
 import { num, searchRecord, stockValue, str } from "@/lib/records";
 import { useRecords } from "@/services/entityService";
 import type { ErpRecord } from "@/types/erp";
+import { useAuthStore } from "@/store/auth";
+import { BackendAggregateUnavailable } from "./BackendAggregateUnavailable";
 
 interface AlertRow {
   product: ErpRecord;
@@ -44,7 +46,7 @@ function severityTone(kind: AlertRow["kind"]) {
   return "warning" as const;
 }
 
-export function AlertsBoard() {
+function LegacyAlertsBoard() {
   const navigate = useNavigate();
   const products = useRecords("products");
   const plans = useRecords("warehouse_item_plans");
@@ -193,4 +195,19 @@ export function AlertsBoard() {
       )}
     </div>
   );
+}
+
+export function AlertsBoard() {
+  const live = useAuthStore((state) =>
+    state.source === "api" && state.token !== null && !state.token.startsWith("mock."),
+  );
+  if (live) {
+    return (
+      <BackendAggregateUnavailable
+        title="Low-stock alerts"
+        description="The current backend does not provide a reliable global inventory balance and reorder-threshold aggregate."
+      />
+    );
+  }
+  return <LegacyAlertsBoard />;
 }

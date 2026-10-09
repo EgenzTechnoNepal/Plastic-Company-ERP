@@ -29,6 +29,7 @@ export const PHASE2_TYPED_API = {
   putaways: `${API_V1}/warehouse/putaways/`,
   putawayPost: (id: string) => `${API_V1}/warehouse/putaways/${id}/post/`,
   transfersV2: `${API_V1}/warehouse/stock-transfers-v2/`,
+  transferPost: (id: string) => `${API_V1}/warehouse/stock-transfers-v2/${id}/post/`,
   adjustmentsV2: `${API_V1}/warehouse/stock-adjustments-v2/`,
   cycleCountsV2: `${API_V1}/warehouse/cycle-counts-v2/`,
 } as const;

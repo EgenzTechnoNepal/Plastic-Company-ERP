@@ -25,6 +25,7 @@ export const FORM_ENTITY: Record<string, string> = {
   purchaseOrder: "purchase_orders",
   proformaInvoice: "proforma_invoices",
   letterOfCredit: "letters_of_credit",
+  shipment: "shipments",
   gateEntry: "gate_entries",
   goodsReceipt: "grns",
   vendorBill: "purchase_bills",

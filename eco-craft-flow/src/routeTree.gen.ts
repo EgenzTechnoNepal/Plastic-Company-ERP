@@ -77,10 +77,15 @@ import { Route as AppInventoryAbcRouteImport } from './routes/_app.inventory.abc
 import { Route as AppInventoryAdjustmentsRouteImport } from './routes/_app.inventory.adjustments'
 import { Route as AppInventoryAgeingRouteImport } from './routes/_app.inventory.ageing'
 import { Route as AppInventoryAlertsRouteImport } from './routes/_app.inventory.alerts'
+import { Route as AppInventoryLandedCostRouteImport } from './routes/_app.inventory.landed-cost'
 import { Route as AppInventoryLedgerRouteImport } from './routes/_app.inventory.ledger'
+import { Route as AppInventoryLotsRouteImport } from './routes/_app.inventory.lots'
 import { Route as AppInventoryMovementsRouteImport } from './routes/_app.inventory.movements'
 import { Route as AppInventoryPlanningRouteImport } from './routes/_app.inventory.planning'
 import { Route as AppInventoryProductsRouteImport } from './routes/_app.inventory.products'
+import { Route as AppInventoryReservationsRouteImport } from './routes/_app.inventory.reservations'
+import { Route as AppInventorySupplierPricesRouteImport } from './routes/_app.inventory.supplier-prices'
+import { Route as AppInventoryUomRouteImport } from './routes/_app.inventory.uom'
 import { Route as AppProductionIndexRouteImport } from './routes/_app.production.index'
 import { Route as AppProductionBatchesRouteImport } from './routes/_app.production.batches'
 import { Route as AppProductionBomRouteImport } from './routes/_app.production.bom'
@@ -106,6 +111,7 @@ import { Route as AppPurchaseReceiptsRouteImport } from './routes/_app.purchase.
 import { Route as AppPurchaseRequisitionsRouteImport } from './routes/_app.purchase.requisitions'
 import { Route as AppPurchaseReturnsRouteImport } from './routes/_app.purchase.returns'
 import { Route as AppPurchaseRfqsRouteImport } from './routes/_app.purchase.rfqs'
+import { Route as AppPurchaseShipmentsRouteImport } from './routes/_app.purchase.shipments'
 import { Route as AppPurchaseSuppliersRouteImport } from './routes/_app.purchase.suppliers'
 import { Route as AppQualityControlIndexRouteImport } from './routes/_app.quality-control.index'
 import { Route as AppQualityControlCapaRouteImport } from './routes/_app.quality-control.capa'
@@ -144,9 +150,11 @@ import { Route as AppWarehousePackingRouteImport } from './routes/_app.warehouse
 import { Route as AppWarehousePickingRouteImport } from './routes/_app.warehouse.picking'
 import { Route as AppWarehousePutawayRouteImport } from './routes/_app.warehouse.putaway'
 import { Route as AppWarehouseQuarantineRouteImport } from './routes/_app.warehouse.quarantine'
+import { Route as AppWarehouseRacksRouteImport } from './routes/_app.warehouse.racks'
 import { Route as AppWarehouseReceivingRouteImport } from './routes/_app.warehouse.receiving'
 import { Route as AppWarehouseTransfersRouteImport } from './routes/_app.warehouse.transfers'
 import { Route as AppWarehouseWarehousesRouteImport } from './routes/_app.warehouse.warehouses'
+import { Route as AppWarehouseZonesRouteImport } from './routes/_app.warehouse.zones'
 import { Route as AppAccountingEntityIdRouteImport } from './routes/_app.accounting.$entity.$id'
 import { Route as AppAccountingEntityNewRouteImport } from './routes/_app.accounting.$entity.new'
 import { Route as AppCrmEntityIdRouteImport } from './routes/_app.crm.$entity.$id'
@@ -532,9 +540,19 @@ const AppInventoryAlertsRoute = AppInventoryAlertsRouteImport.update({
   path: '/alerts',
   getParentRoute: () => AppInventoryRoute,
 } as any)
+const AppInventoryLandedCostRoute = AppInventoryLandedCostRouteImport.update({
+  id: '/landed-cost',
+  path: '/landed-cost',
+  getParentRoute: () => AppInventoryRoute,
+} as any)
 const AppInventoryLedgerRoute = AppInventoryLedgerRouteImport.update({
   id: '/ledger',
   path: '/ledger',
+  getParentRoute: () => AppInventoryRoute,
+} as any)
+const AppInventoryLotsRoute = AppInventoryLotsRouteImport.update({
+  id: '/lots',
+  path: '/lots',
   getParentRoute: () => AppInventoryRoute,
 } as any)
 const AppInventoryMovementsRoute = AppInventoryMovementsRouteImport.update({
@@ -550,6 +568,23 @@ const AppInventoryPlanningRoute = AppInventoryPlanningRouteImport.update({
 const AppInventoryProductsRoute = AppInventoryProductsRouteImport.update({
   id: '/products',
   path: '/products',
+  getParentRoute: () => AppInventoryRoute,
+} as any)
+const AppInventoryReservationsRoute =
+  AppInventoryReservationsRouteImport.update({
+    id: '/reservations',
+    path: '/reservations',
+    getParentRoute: () => AppInventoryRoute,
+  } as any)
+const AppInventorySupplierPricesRoute =
+  AppInventorySupplierPricesRouteImport.update({
+    id: '/supplier-prices',
+    path: '/supplier-prices',
+    getParentRoute: () => AppInventoryRoute,
+  } as any)
+const AppInventoryUomRoute = AppInventoryUomRouteImport.update({
+  id: '/uom',
+  path: '/uom',
   getParentRoute: () => AppInventoryRoute,
 } as any)
 const AppProductionIndexRoute = AppProductionIndexRouteImport.update({
@@ -677,6 +712,11 @@ const AppPurchaseReturnsRoute = AppPurchaseReturnsRouteImport.update({
 const AppPurchaseRfqsRoute = AppPurchaseRfqsRouteImport.update({
   id: '/rfqs',
   path: '/rfqs',
+  getParentRoute: () => AppPurchaseRoute,
+} as any)
+const AppPurchaseShipmentsRoute = AppPurchaseShipmentsRouteImport.update({
+  id: '/shipments',
+  path: '/shipments',
   getParentRoute: () => AppPurchaseRoute,
 } as any)
 const AppPurchaseSuppliersRoute = AppPurchaseSuppliersRouteImport.update({
@@ -875,6 +915,11 @@ const AppWarehouseQuarantineRoute = AppWarehouseQuarantineRouteImport.update({
   path: '/quarantine',
   getParentRoute: () => AppWarehouseRoute,
 } as any)
+const AppWarehouseRacksRoute = AppWarehouseRacksRouteImport.update({
+  id: '/racks',
+  path: '/racks',
+  getParentRoute: () => AppWarehouseRoute,
+} as any)
 const AppWarehouseReceivingRoute = AppWarehouseReceivingRouteImport.update({
   id: '/receiving',
   path: '/receiving',
@@ -888,6 +933,11 @@ const AppWarehouseTransfersRoute = AppWarehouseTransfersRouteImport.update({
 const AppWarehouseWarehousesRoute = AppWarehouseWarehousesRouteImport.update({
   id: '/warehouses',
   path: '/warehouses',
+  getParentRoute: () => AppWarehouseRoute,
+} as any)
+const AppWarehouseZonesRoute = AppWarehouseZonesRouteImport.update({
+  id: '/zones',
+  path: '/zones',
   getParentRoute: () => AppWarehouseRoute,
 } as any)
 const AppAccountingEntityIdRoute = AppAccountingEntityIdRouteImport.update({
@@ -1185,10 +1235,15 @@ export interface FileRoutesByFullPath {
   '/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/inventory/ageing': typeof AppInventoryAgeingRoute
   '/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/inventory/lots': typeof AppInventoryLotsRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
   '/inventory/products': typeof AppInventoryProductsRoute
+  '/inventory/reservations': typeof AppInventoryReservationsRoute
+  '/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
+  '/inventory/uom': typeof AppInventoryUomRoute
   '/production/batches': typeof AppProductionBatchesRoute
   '/production/bom': typeof AppProductionBomRoute
   '/production/consumption': typeof AppProductionConsumptionRoute
@@ -1212,6 +1267,7 @@ export interface FileRoutesByFullPath {
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
   '/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/quality-control/capa': typeof AppQualityControlCapaRoute
   '/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1245,9 +1301,11 @@ export interface FileRoutesByFullPath {
   '/warehouse/picking': typeof AppWarehousePickingRoute
   '/warehouse/putaway': typeof AppWarehousePutawayRoute
   '/warehouse/quarantine': typeof AppWarehouseQuarantineRoute
+  '/warehouse/racks': typeof AppWarehouseRacksRoute
   '/warehouse/receiving': typeof AppWarehouseReceivingRoute
   '/warehouse/transfers': typeof AppWarehouseTransfersRoute
   '/warehouse/warehouses': typeof AppWarehouseWarehousesRoute
+  '/warehouse/zones': typeof AppWarehouseZonesRoute
   '/accounting/': typeof AppAccountingIndexRoute
   '/approvals/': typeof AppApprovalsIndexRoute
   '/crm/': typeof AppCrmIndexRoute
@@ -1354,10 +1412,15 @@ export interface FileRoutesByTo {
   '/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/inventory/ageing': typeof AppInventoryAgeingRoute
   '/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/inventory/lots': typeof AppInventoryLotsRoute
   '/inventory/movements': typeof AppInventoryMovementsRoute
   '/inventory/planning': typeof AppInventoryPlanningRoute
   '/inventory/products': typeof AppInventoryProductsRoute
+  '/inventory/reservations': typeof AppInventoryReservationsRoute
+  '/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
+  '/inventory/uom': typeof AppInventoryUomRoute
   '/production/batches': typeof AppProductionBatchesRoute
   '/production/bom': typeof AppProductionBomRoute
   '/production/consumption': typeof AppProductionConsumptionRoute
@@ -1381,6 +1444,7 @@ export interface FileRoutesByTo {
   '/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/purchase/returns': typeof AppPurchaseReturnsRoute
   '/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/quality-control/capa': typeof AppQualityControlCapaRoute
   '/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1414,9 +1478,11 @@ export interface FileRoutesByTo {
   '/warehouse/picking': typeof AppWarehousePickingRoute
   '/warehouse/putaway': typeof AppWarehousePutawayRoute
   '/warehouse/quarantine': typeof AppWarehouseQuarantineRoute
+  '/warehouse/racks': typeof AppWarehouseRacksRoute
   '/warehouse/receiving': typeof AppWarehouseReceivingRoute
   '/warehouse/transfers': typeof AppWarehouseTransfersRoute
   '/warehouse/warehouses': typeof AppWarehouseWarehousesRoute
+  '/warehouse/zones': typeof AppWarehouseZonesRoute
   '/accounting': typeof AppAccountingIndexRoute
   '/approvals': typeof AppApprovalsIndexRoute
   '/crm': typeof AppCrmIndexRoute
@@ -1529,10 +1595,15 @@ export interface FileRoutesById {
   '/_app/inventory/adjustments': typeof AppInventoryAdjustmentsRoute
   '/_app/inventory/ageing': typeof AppInventoryAgeingRoute
   '/_app/inventory/alerts': typeof AppInventoryAlertsRoute
+  '/_app/inventory/landed-cost': typeof AppInventoryLandedCostRoute
   '/_app/inventory/ledger': typeof AppInventoryLedgerRoute
+  '/_app/inventory/lots': typeof AppInventoryLotsRoute
   '/_app/inventory/movements': typeof AppInventoryMovementsRoute
   '/_app/inventory/planning': typeof AppInventoryPlanningRoute
   '/_app/inventory/products': typeof AppInventoryProductsRoute
+  '/_app/inventory/reservations': typeof AppInventoryReservationsRoute
+  '/_app/inventory/supplier-prices': typeof AppInventorySupplierPricesRoute
+  '/_app/inventory/uom': typeof AppInventoryUomRoute
   '/_app/production/batches': typeof AppProductionBatchesRoute
   '/_app/production/bom': typeof AppProductionBomRoute
   '/_app/production/consumption': typeof AppProductionConsumptionRoute
@@ -1556,6 +1627,7 @@ export interface FileRoutesById {
   '/_app/purchase/requisitions': typeof AppPurchaseRequisitionsRoute
   '/_app/purchase/returns': typeof AppPurchaseReturnsRoute
   '/_app/purchase/rfqs': typeof AppPurchaseRfqsRoute
+  '/_app/purchase/shipments': typeof AppPurchaseShipmentsRoute
   '/_app/purchase/suppliers': typeof AppPurchaseSuppliersRoute
   '/_app/quality-control/capa': typeof AppQualityControlCapaRoute
   '/_app/quality-control/coa': typeof AppQualityControlCoaRoute
@@ -1589,9 +1661,11 @@ export interface FileRoutesById {
   '/_app/warehouse/picking': typeof AppWarehousePickingRoute
   '/_app/warehouse/putaway': typeof AppWarehousePutawayRoute
   '/_app/warehouse/quarantine': typeof AppWarehouseQuarantineRoute
+  '/_app/warehouse/racks': typeof AppWarehouseRacksRoute
   '/_app/warehouse/receiving': typeof AppWarehouseReceivingRoute
   '/_app/warehouse/transfers': typeof AppWarehouseTransfersRoute
   '/_app/warehouse/warehouses': typeof AppWarehouseWarehousesRoute
+  '/_app/warehouse/zones': typeof AppWarehouseZonesRoute
   '/_app/accounting/': typeof AppAccountingIndexRoute
   '/_app/approvals/': typeof AppApprovalsIndexRoute
   '/_app/crm/': typeof AppCrmIndexRoute
@@ -1713,10 +1787,15 @@ export interface FileRouteTypes {
     | '/inventory/adjustments'
     | '/inventory/ageing'
     | '/inventory/alerts'
+    | '/inventory/landed-cost'
     | '/inventory/ledger'
+    | '/inventory/lots'
     | '/inventory/movements'
     | '/inventory/planning'
     | '/inventory/products'
+    | '/inventory/reservations'
+    | '/inventory/supplier-prices'
+    | '/inventory/uom'
     | '/production/batches'
     | '/production/bom'
     | '/production/consumption'
@@ -1740,6 +1819,7 @@ export interface FileRouteTypes {
     | '/purchase/requisitions'
     | '/purchase/returns'
     | '/purchase/rfqs'
+    | '/purchase/shipments'
     | '/purchase/suppliers'
     | '/quality-control/capa'
     | '/quality-control/coa'
@@ -1773,9 +1853,11 @@ export interface FileRouteTypes {
     | '/warehouse/picking'
     | '/warehouse/putaway'
     | '/warehouse/quarantine'
+    | '/warehouse/racks'
     | '/warehouse/receiving'
     | '/warehouse/transfers'
     | '/warehouse/warehouses'
+    | '/warehouse/zones'
     | '/accounting/'
     | '/approvals/'
     | '/crm/'
@@ -1882,10 +1964,15 @@ export interface FileRouteTypes {
     | '/inventory/adjustments'
     | '/inventory/ageing'
     | '/inventory/alerts'
+    | '/inventory/landed-cost'
     | '/inventory/ledger'
+    | '/inventory/lots'
     | '/inventory/movements'
     | '/inventory/planning'
     | '/inventory/products'
+    | '/inventory/reservations'
+    | '/inventory/supplier-prices'
+    | '/inventory/uom'
     | '/production/batches'
     | '/production/bom'
     | '/production/consumption'
@@ -1909,6 +1996,7 @@ export interface FileRouteTypes {
     | '/purchase/requisitions'
     | '/purchase/returns'
     | '/purchase/rfqs'
+    | '/purchase/shipments'
     | '/purchase/suppliers'
     | '/quality-control/capa'
     | '/quality-control/coa'
@@ -1942,9 +2030,11 @@ export interface FileRouteTypes {
     | '/warehouse/picking'
     | '/warehouse/putaway'
     | '/warehouse/quarantine'
+    | '/warehouse/racks'
     | '/warehouse/receiving'
     | '/warehouse/transfers'
     | '/warehouse/warehouses'
+    | '/warehouse/zones'
     | '/accounting'
     | '/approvals'
     | '/crm'
@@ -2056,10 +2146,15 @@ export interface FileRouteTypes {
     | '/_app/inventory/adjustments'
     | '/_app/inventory/ageing'
     | '/_app/inventory/alerts'
+    | '/_app/inventory/landed-cost'
     | '/_app/inventory/ledger'
+    | '/_app/inventory/lots'
     | '/_app/inventory/movements'
     | '/_app/inventory/planning'
     | '/_app/inventory/products'
+    | '/_app/inventory/reservations'
+    | '/_app/inventory/supplier-prices'
+    | '/_app/inventory/uom'
     | '/_app/production/batches'
     | '/_app/production/bom'
     | '/_app/production/consumption'
@@ -2083,6 +2178,7 @@ export interface FileRouteTypes {
     | '/_app/purchase/requisitions'
     | '/_app/purchase/returns'
     | '/_app/purchase/rfqs'
+    | '/_app/purchase/shipments'
     | '/_app/purchase/suppliers'
     | '/_app/quality-control/capa'
     | '/_app/quality-control/coa'
@@ -2116,9 +2212,11 @@ export interface FileRouteTypes {
     | '/_app/warehouse/picking'
     | '/_app/warehouse/putaway'
     | '/_app/warehouse/quarantine'
+    | '/_app/warehouse/racks'
     | '/_app/warehouse/receiving'
     | '/_app/warehouse/transfers'
     | '/_app/warehouse/warehouses'
+    | '/_app/warehouse/zones'
     | '/_app/accounting/'
     | '/_app/approvals/'
     | '/_app/crm/'
@@ -2663,11 +2761,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppInventoryAlertsRouteImport
       parentRoute: typeof AppInventoryRoute
     }
+    '/_app/inventory/landed-cost': {
+      id: '/_app/inventory/landed-cost'
+      path: '/landed-cost'
+      fullPath: '/inventory/landed-cost'
+      preLoaderRoute: typeof AppInventoryLandedCostRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
     '/_app/inventory/ledger': {
       id: '/_app/inventory/ledger'
       path: '/ledger'
       fullPath: '/inventory/ledger'
       preLoaderRoute: typeof AppInventoryLedgerRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/lots': {
+      id: '/_app/inventory/lots'
+      path: '/lots'
+      fullPath: '/inventory/lots'
+      preLoaderRoute: typeof AppInventoryLotsRouteImport
       parentRoute: typeof AppInventoryRoute
     }
     '/_app/inventory/movements': {
@@ -2689,6 +2801,27 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/inventory/products'
       preLoaderRoute: typeof AppInventoryProductsRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/reservations': {
+      id: '/_app/inventory/reservations'
+      path: '/reservations'
+      fullPath: '/inventory/reservations'
+      preLoaderRoute: typeof AppInventoryReservationsRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/supplier-prices': {
+      id: '/_app/inventory/supplier-prices'
+      path: '/supplier-prices'
+      fullPath: '/inventory/supplier-prices'
+      preLoaderRoute: typeof AppInventorySupplierPricesRouteImport
+      parentRoute: typeof AppInventoryRoute
+    }
+    '/_app/inventory/uom': {
+      id: '/_app/inventory/uom'
+      path: '/uom'
+      fullPath: '/inventory/uom'
+      preLoaderRoute: typeof AppInventoryUomRouteImport
       parentRoute: typeof AppInventoryRoute
     }
     '/_app/production/': {
@@ -2864,6 +2997,13 @@ declare module '@tanstack/react-router' {
       path: '/rfqs'
       fullPath: '/purchase/rfqs'
       preLoaderRoute: typeof AppPurchaseRfqsRouteImport
+      parentRoute: typeof AppPurchaseRoute
+    }
+    '/_app/purchase/shipments': {
+      id: '/_app/purchase/shipments'
+      path: '/shipments'
+      fullPath: '/purchase/shipments'
+      preLoaderRoute: typeof AppPurchaseShipmentsRouteImport
       parentRoute: typeof AppPurchaseRoute
     }
     '/_app/purchase/suppliers': {
@@ -3132,6 +3272,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWarehouseQuarantineRouteImport
       parentRoute: typeof AppWarehouseRoute
     }
+    '/_app/warehouse/racks': {
+      id: '/_app/warehouse/racks'
+      path: '/racks'
+      fullPath: '/warehouse/racks'
+      preLoaderRoute: typeof AppWarehouseRacksRouteImport
+      parentRoute: typeof AppWarehouseRoute
+    }
     '/_app/warehouse/receiving': {
       id: '/_app/warehouse/receiving'
       path: '/receiving'
@@ -3151,6 +3298,13 @@ declare module '@tanstack/react-router' {
       path: '/warehouses'
       fullPath: '/warehouse/warehouses'
       preLoaderRoute: typeof AppWarehouseWarehousesRouteImport
+      parentRoute: typeof AppWarehouseRoute
+    }
+    '/_app/warehouse/zones': {
+      id: '/_app/warehouse/zones'
+      path: '/zones'
+      fullPath: '/warehouse/zones'
+      preLoaderRoute: typeof AppWarehouseZonesRouteImport
       parentRoute: typeof AppWarehouseRoute
     }
     '/_app/accounting/$entity/$id': {
@@ -3659,10 +3813,15 @@ interface AppInventoryRouteChildren {
   AppInventoryAdjustmentsRoute: typeof AppInventoryAdjustmentsRoute
   AppInventoryAgeingRoute: typeof AppInventoryAgeingRoute
   AppInventoryAlertsRoute: typeof AppInventoryAlertsRoute
+  AppInventoryLandedCostRoute: typeof AppInventoryLandedCostRoute
   AppInventoryLedgerRoute: typeof AppInventoryLedgerRoute
+  AppInventoryLotsRoute: typeof AppInventoryLotsRoute
   AppInventoryMovementsRoute: typeof AppInventoryMovementsRoute
   AppInventoryPlanningRoute: typeof AppInventoryPlanningRoute
   AppInventoryProductsRoute: typeof AppInventoryProductsRoute
+  AppInventoryReservationsRoute: typeof AppInventoryReservationsRoute
+  AppInventorySupplierPricesRoute: typeof AppInventorySupplierPricesRoute
+  AppInventoryUomRoute: typeof AppInventoryUomRoute
   AppInventoryIndexRoute: typeof AppInventoryIndexRoute
   AppInventoryEntityIdRoute: typeof AppInventoryEntityIdRouteWithChildren
   AppInventoryEntityNewRoute: typeof AppInventoryEntityNewRoute
@@ -3673,10 +3832,15 @@ const AppInventoryRouteChildren: AppInventoryRouteChildren = {
   AppInventoryAdjustmentsRoute: AppInventoryAdjustmentsRoute,
   AppInventoryAgeingRoute: AppInventoryAgeingRoute,
   AppInventoryAlertsRoute: AppInventoryAlertsRoute,
+  AppInventoryLandedCostRoute: AppInventoryLandedCostRoute,
   AppInventoryLedgerRoute: AppInventoryLedgerRoute,
+  AppInventoryLotsRoute: AppInventoryLotsRoute,
   AppInventoryMovementsRoute: AppInventoryMovementsRoute,
   AppInventoryPlanningRoute: AppInventoryPlanningRoute,
   AppInventoryProductsRoute: AppInventoryProductsRoute,
+  AppInventoryReservationsRoute: AppInventoryReservationsRoute,
+  AppInventorySupplierPricesRoute: AppInventorySupplierPricesRoute,
+  AppInventoryUomRoute: AppInventoryUomRoute,
   AppInventoryIndexRoute: AppInventoryIndexRoute,
   AppInventoryEntityIdRoute: AppInventoryEntityIdRouteWithChildren,
   AppInventoryEntityNewRoute: AppInventoryEntityNewRoute,
@@ -3771,6 +3935,7 @@ interface AppPurchaseRouteChildren {
   AppPurchaseRequisitionsRoute: typeof AppPurchaseRequisitionsRoute
   AppPurchaseReturnsRoute: typeof AppPurchaseReturnsRoute
   AppPurchaseRfqsRoute: typeof AppPurchaseRfqsRoute
+  AppPurchaseShipmentsRoute: typeof AppPurchaseShipmentsRoute
   AppPurchaseSuppliersRoute: typeof AppPurchaseSuppliersRoute
   AppPurchaseIndexRoute: typeof AppPurchaseIndexRoute
   AppPurchaseEntityIdRoute: typeof AppPurchaseEntityIdRouteWithChildren
@@ -3790,6 +3955,7 @@ const AppPurchaseRouteChildren: AppPurchaseRouteChildren = {
   AppPurchaseRequisitionsRoute: AppPurchaseRequisitionsRoute,
   AppPurchaseReturnsRoute: AppPurchaseReturnsRoute,
   AppPurchaseRfqsRoute: AppPurchaseRfqsRoute,
+  AppPurchaseShipmentsRoute: AppPurchaseShipmentsRoute,
   AppPurchaseSuppliersRoute: AppPurchaseSuppliersRoute,
   AppPurchaseIndexRoute: AppPurchaseIndexRoute,
   AppPurchaseEntityIdRoute: AppPurchaseEntityIdRouteWithChildren,
@@ -3956,9 +4122,11 @@ interface AppWarehouseRouteChildren {
   AppWarehousePickingRoute: typeof AppWarehousePickingRoute
   AppWarehousePutawayRoute: typeof AppWarehousePutawayRoute
   AppWarehouseQuarantineRoute: typeof AppWarehouseQuarantineRoute
+  AppWarehouseRacksRoute: typeof AppWarehouseRacksRoute
   AppWarehouseReceivingRoute: typeof AppWarehouseReceivingRoute
   AppWarehouseTransfersRoute: typeof AppWarehouseTransfersRoute
   AppWarehouseWarehousesRoute: typeof AppWarehouseWarehousesRoute
+  AppWarehouseZonesRoute: typeof AppWarehouseZonesRoute
   AppWarehouseIndexRoute: typeof AppWarehouseIndexRoute
   AppWarehouseEntityIdRoute: typeof AppWarehouseEntityIdRouteWithChildren
   AppWarehouseEntityNewRoute: typeof AppWarehouseEntityNewRoute
@@ -3973,9 +4141,11 @@ const AppWarehouseRouteChildren: AppWarehouseRouteChildren = {
   AppWarehousePickingRoute: AppWarehousePickingRoute,
   AppWarehousePutawayRoute: AppWarehousePutawayRoute,
   AppWarehouseQuarantineRoute: AppWarehouseQuarantineRoute,
+  AppWarehouseRacksRoute: AppWarehouseRacksRoute,
   AppWarehouseReceivingRoute: AppWarehouseReceivingRoute,
   AppWarehouseTransfersRoute: AppWarehouseTransfersRoute,
   AppWarehouseWarehousesRoute: AppWarehouseWarehousesRoute,
+  AppWarehouseZonesRoute: AppWarehouseZonesRoute,
   AppWarehouseIndexRoute: AppWarehouseIndexRoute,
   AppWarehouseEntityIdRoute: AppWarehouseEntityIdRouteWithChildren,
   AppWarehouseEntityNewRoute: AppWarehouseEntityNewRoute,

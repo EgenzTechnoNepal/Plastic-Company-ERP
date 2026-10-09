@@ -22,15 +22,25 @@ export function ApprovalPanel({ requests }: { requests: ApprovalRequest[] }) {
                 {r.status}
               </StatusBadge>
             </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {r.requester} · {npr(r.amount)} · L{r.level}/{r.totalLevels} · {r.approverRole}
-              {r.delegatedTo ? ` · delegated to ${r.delegatedTo}` : ""}
-            </p>
+            {r.typed ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {r.documentType} · {r.requester} · requested {r.createdAt.slice(0, 10)}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {r.requester} · {npr(r.amount)} · L{r.level}/{r.totalLevels} · {r.approverRole}
+                {r.delegatedTo ? ` · delegated to ${r.delegatedTo}` : ""}
+              </p>
+            )}
             {r.reason && <p className="mt-1 text-xs">{r.reason}</p>}
           </div>
         ))}
         {pending.length > 0 && (
-          <p className="text-xs text-muted-foreground">Use Approve / Reject in the header to decide.</p>
+          <p className="text-xs text-muted-foreground">
+            {pending.some((request) => request.typed)
+              ? "Server approval decisions are managed in the Approvals inbox."
+              : "Use Approve / Reject in the header to decide."}
+          </p>
         )}
       </CardContent>
     </Card>

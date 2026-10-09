@@ -5,12 +5,36 @@
 import { API_V1 } from "./endpoints";
 import { apiFetch, apiFetchMeta } from "./client";
 import type { DocStatus, ErpRecord, LineItem } from "@/types/erp";
+import { PHASE1_TYPED_API } from "./phase1";
 import { PHASE2_TYPED_API } from "./phase2";
 import { PHASE3_TYPED_API } from "./phase3";
 
 import { typedUnavailable } from "./typedEntities";
 
-export { M2_DEMO_TYPED_ENTITIES } from "./typedEntities";
+export { M2_DEMO_TYPED_ENTITIES, M2_TYPED_DETAIL_ENTITIES } from "./typedEntities";
+
+export type TypedListQuery = {
+  search?: string;
+  company?: string;
+  supplier?: string;
+  purchase_order?: string;
+  sales_order?: string;
+  customer?: string;
+  contact?: string;
+  activity_type?: string;
+  party_kind?: string;
+  customer_type?: string;
+  quality_status?: string;
+  warehouse?: string;
+  item?: string;
+  lot?: string;
+  grn?: string;
+  txn_type?: string;
+  status?: string;
+  is_active?: string | boolean;
+  page?: number;
+  page_size?: number;
+};
 
 export const M2_TYPED_PATHS = {
   vendors: `${API_V1}/purchase/vendors/`,
@@ -18,8 +42,13 @@ export const M2_TYPED_PATHS = {
   facilities: `${API_V1}/warehouse/facilities/`,
   storageBins: `${API_V1}/warehouse/storage-bins/`,
   lots: `${API_V1}/inventory/lots/`,
+  receiptLayers: `${API_V1}/inventory/receipt-layers/`,
   landedDocs: `${API_V1}/inventory/landed-cost-documents/`,
+  landedComponents: `${API_V1}/inventory/landed-cost-components/`,
+  landedAllocations: `${API_V1}/inventory/landed-cost-allocations/`,
 } as const;
+
+const UUID_RE = /^[0-9a-f-]{32,36}$/i;
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -37,8 +66,21 @@ function statusMap(raw: string | undefined): DocStatus {
   return (s as DocStatus) || "draft";
 }
 
-async function listRows<T>(path: string): Promise<T[]> {
-  const { data } = await apiFetchMeta<T[]>(path, { query: { page_size: 200 }, silent: true });
+function cleanListQuery(
+  query: TypedListQuery | undefined,
+  allowed: Array<keyof TypedListQuery>,
+): Record<string, string | number | boolean | undefined> | undefined {
+  if (!query) return undefined;
+  const out: Record<string, string | number | boolean | undefined> = {};
+  for (const key of allowed) {
+    const value = query[key];
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
+}
+
+async function listRows<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T[]> {
+  const { data } = await apiFetchMeta<T[]>(path, { query: query ?? { page_size: 200 }, silent: true });
   return Array.isArray(data) ? data : [];
 }
 
@@ -71,52 +113,578 @@ function baseRecord(
 
 type Named = { id: string; code?: string; sku?: string; name?: string; legal_name?: string; trading_name?: string; document_number?: string; gate_entry_number?: string; grn_number?: string; inspection_number?: string; lot_number?: string; status?: string; is_active?: boolean; created_at?: string; updated_at?: string };
 
-export async function listTypedSuppliers(): Promise<ErpRecord[]> {
-  const rows = await listRows<Named & { country?: string; email?: string; phone?: string; payment_terms?: string }>(M2_TYPED_PATHS.vendors);
-  return rows.map((r) =>
-    baseRecord(
-      "suppliers",
-      r.id,
-      r.code ?? r.id,
-      r.trading_name || r.legal_name || r.code || "Supplier",
-      r.is_active === false ? "inactive" : "active",
-      {
-        name: r.legal_name,
-        displayName: r.trading_name,
-        country: r.country,
-        email: r.email,
-        phone: r.phone,
-        paymentTerms: r.payment_terms,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+type PurchaseOrderRow = Named & {
+  supplier?: string;
+  supplier_code?: string;
+  supplier_name?: string;
+  currency?: string | null;
+  currency_code?: string;
+  exchange_rate?: string;
+  incoterm?: string | null;
+  named_place?: string;
+  destination_warehouse?: string | null;
+  payment_terms?: string;
+  expected_delivery_date?: string | null;
+  notes?: string;
+  revision_no?: number;
+  approved_at?: string | null;
+  closed_at?: string | null;
+  lines?: Array<{
+    id: string;
+    item?: string;
+    item_sku?: string;
+    item_name?: string;
+    ordered_quantity?: string;
+    received_quantity?: string;
+    cancelled_quantity?: string;
+    remaining_receivable?: string;
+    unit_price?: string;
+    discount_pct?: string;
+    tax_pct?: string;
+    destination_warehouse?: string | null;
+    uom?: string;
+    uom_code?: string;
+    notes?: string;
+  }>;
+};
+
+type ProformaInvoiceRow = Named & {
+  purchase_order?: string;
+  supplier?: string;
+  seller_pi_number?: string;
+  currency_code?: string;
+  total_amount?: string;
+  payment_terms?: string;
+  lead_time_days?: number;
+  expected_delivery_date?: string;
+  notes?: string;
+  attachment_url?: string;
+};
+
+type LetterOfCreditRow = Named & {
+  purchase_order?: string;
+  proforma_invoice?: string;
+  supplier?: string;
+  bank_name?: string;
+  lc_number?: string;
+  currency_code?: string;
+  amount?: string;
+  expiry_date?: string | null;
+  latest_shipment_date?: string | null;
+  seller_approval_note?: string;
+  final_lc_number?: string;
+  match_result?: Record<string, unknown>;
+  pre_dispatch_message?: string;
+  draft_scan_url?: string;
+  draft_extracted?: Record<string, unknown>;
+  document_checklist?: Record<string, unknown>;
+  notes?: string;
+  gate_allowed?: boolean;
+  gate_message?: string;
+};
+
+type ImportShipmentRow = Named & {
+  company?: string;
+  shipment_number?: string;
+  supplier?: string;
+  incoterm?: string | null;
+  named_place?: string;
+  purchase_reference?: string;
+  purchase_order?: string | null;
+  etd?: string | null;
+  eta?: string | null;
+  notes?: string;
+};
+
+type GateEntryRow = Named & {
+  supplier?: string;
+  shipment?: string | null;
+  purchase_reference?: string;
+  purchase_order?: string;
+  vehicle_number?: string;
+  driver_name?: string;
+  material_reference?: string;
+  quantity_note?: string;
+  document_references?: unknown;
+  remarks?: string;
+  lc_gate_allowed?: boolean;
+  lc_gate_message?: string;
+  lc_id?: string | null;
+  lc_document_number?: string | null;
+  lc_status?: string | null;
+};
+
+type GoodsReceiptRow = Named & {
+  supplier?: string;
+  warehouse?: string;
+  receiving_bin?: string | null;
+  gate_entry?: string;
+  shipment?: string | null;
+  purchase_reference?: string;
+  received_at?: string;
+  currency?: string | null;
+  posted_at?: string | null;
+  notes?: string;
+  lc_gate_allowed?: boolean;
+  lc_gate_message?: string;
+  lc_id?: string | null;
+  lc_document_number?: string | null;
+  lc_status?: string | null;
+  lines?: Array<{
+    id?: string;
+    item?: string;
+    uom?: string;
+    received_quantity?: string;
+    accepted_quantity?: string;
+    rejected_quantity?: string;
+    purchase_unit_cost?: string;
+    supplier_lot_number?: string;
+    lot_number?: string;
+    manufacturing_date?: string | null;
+    expiry_date?: string | null;
+    lot?: string | null;
+    receipt_layer?: string | null;
+    purchase_order_line?: string | null;
+    line_notes?: string;
+  }>;
+};
+
+type InventoryLotRow = Named & {
+  company?: string;
+  lot_number?: string;
+  item?: string;
+  supplier?: string | null;
+  supplier_lot_number?: string;
+  manufacturing_date?: string | null;
+  expiry_date?: string | null;
+  received_date?: string | null;
+  source_grn_reference?: string;
+  purchase_reference?: string;
+  certificate_coa_reference?: string;
+  warehouse?: string | null;
+  bin?: string | null;
+  status?: string;
+  qc_status?: string;
+  uom?: string | null;
+  initial_quantity?: string;
+  remaining_quantity?: string;
+  currency?: string | null;
+  purchase_unit_cost?: string;
+  landed_unit_cost?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type InventoryReceiptLayerRow = {
+  id: string;
+  company?: string;
+  lot?: string;
+  item?: string;
+  warehouse?: string | null;
+  bin?: string | null;
+  received_at?: string;
+  receipt_sequence?: number;
+  uom?: string | null;
+  initial_quantity?: string;
+  remaining_quantity?: string;
+  reserved_quantity?: string;
+  purchase_unit_cost?: string;
+  landed_unit_cost?: string | null;
+  currency?: string | null;
+  qc_status?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type StockLedgerRow = {
+  id: string;
+  company?: string;
+  item?: string;
+  lot?: string | null;
+  receipt_layer?: string | null;
+  warehouse?: string | null;
+  bin?: string | null;
+  txn_type?: string;
+  quantity_in?: string;
+  quantity_out?: string;
+  uom?: string | null;
+  unit_cost?: string;
+  total_cost?: string;
+  reference_type?: string;
+  reference_id?: string;
+  reason?: string;
+  occurred_at?: string;
+  is_state_event?: boolean;
+  created_at?: string;
+};
+
+type StockReservationRow = {
+  id: string;
+  company?: string;
+  item?: string;
+  lot?: string | null;
+  receipt_layer?: string | null;
+  warehouse?: string | null;
+  quantity?: string;
+  uom?: string | null;
+  reference_type?: string;
+  reference_id?: string;
+  status?: string;
+  notes?: string;
+  allocations?: Array<{ id: string; receipt_layer?: string; lot?: string; quantity?: string }>;
+  created_at?: string;
+};
+
+type PutawayRow = {
+  id: string;
+  company?: string;
+  putaway_number?: string;
+  lot?: string;
+  from_bin?: string | null;
+  to_warehouse?: string;
+  to_bin?: string;
+  quantity?: string;
+  status?: string;
+  posted_at?: string | null;
+  notes?: string;
+  created_at?: string;
+};
+
+type StockTransferRow = {
+  id: string;
+  company?: string;
+  transfer_number?: string;
+  item?: string;
+  lot?: string | null;
+  quantity?: string;
+  uom?: string | null;
+  from_warehouse?: string;
+  from_bin?: string | null;
+  to_warehouse?: string;
+  to_bin?: string;
+  status?: string;
+  posted_at?: string | null;
+  notes?: string;
+  created_at?: string;
+};
+
+type SalesOrderLineRow = {
+  id: string;
+  line_no?: number;
+  item?: string;
+  uom?: string;
+  warehouse?: string | null;
+  ordered_quantity?: string;
+  reserved_quantity?: string;
+  dispatched_quantity?: string;
+  invoiced_quantity?: string;
+  cancelled_quantity?: string;
+  unit_price?: string;
+  discount_pct?: string;
+  tax_pct?: string;
+  notes?: string;
+};
+
+type SalesOrderRow = Named & {
+  company?: string;
+  document_number?: string;
+  customer?: string;
+  currency?: string | null;
+  warehouse?: string | null;
+  requested_delivery_date?: string | null;
+  promised_delivery_date?: string | null;
+  payment_terms?: string;
+  customer_reference?: string;
+  status?: string;
+  pick_status?: string;
+  pack_status?: string;
+  credit_warning?: string;
+  notes?: string;
+  confirmed_at?: string | null;
+  lines?: SalesOrderLineRow[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+type DispatchNoteRow = Named & {
+  company?: string;
+  document_number?: string;
+  sales_order?: string;
+  warehouse?: string | null;
+  status?: string;
+  posted_at?: string | null;
+  notes?: string;
+  lines?: Array<{ id: string; sales_order_line?: string; quantity?: string; uom?: string }>;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type SalesInvoiceRow = Named & {
+  company?: string;
+  document_number?: string;
+  customer?: string;
+  sales_order?: string | null;
+  dispatch_note?: string | null;
+  currency?: string | null;
+  exchange_rate?: string;
+  status?: string;
+  invoice_date?: string | null;
+  due_date?: string | null;
+  commercials_frozen?: boolean;
+  subtotal?: string;
+  tax_total?: string;
+  total?: string;
+  notes?: string;
+  posted_at?: string | null;
+  lines?: Array<{
+    id: string;
+    line_no?: number;
+    sales_order_line?: string | null;
+    item?: string;
+    uom?: string;
+    quantity?: string;
+    unit_price?: string;
+    tax_pct?: string;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+};
+
+type InventoryBalanceDto = {
+  company_id?: string;
+  item_id?: string;
+  physical?: string;
+  qc_hold?: string;
+  quarantined?: string;
+  rejected?: string;
+  expired?: string;
+  reserved?: string;
+  available?: string;
+  available_to_consume?: string;
+};
+
+type QCInspectionRow = Named & {
+  company?: string;
+  inspection_number?: string;
+  grn?: string | null;
+  lot?: string;
+  item?: string;
+  status?: string;
+  fail_disposition?: string;
+  inspected_at?: string | null;
+  remarks?: string;
+  coa_reference?: string;
+  coa_attachment_url?: string;
+  metrics?: Record<string, unknown>;
+  ncr_reference?: string;
+};
+
+type LandedCostComponentRow = {
+  id: string;
+  document?: string;
+  category?: string;
+  description?: string;
+  amount?: string;
+  currency?: string | null;
+  exchange_rate?: string;
+  base_currency_amount?: string;
+  supplier?: string | null;
+  source_document?: string;
+  source_document_number?: string;
+  tax_amount?: string;
+  cost_date?: string | null;
+  allocation_basis?: string;
+  status?: string;
+  notes?: string;
+};
+
+export type LandedCostComponentDto = LandedCostComponentRow;
+
+type LandedCostAllocationRow = {
+  id: string;
+  document?: string;
+  component?: string;
+  lot?: string | null;
+  item?: string | null;
+  allocation_basis?: string;
+  basis_value?: string;
+  allocated_amount?: string;
+  notes?: string;
+};
+
+export type LandedCostPreviewDto = {
+  document_id: string;
+  document_number: string;
+  purchase_quantity: string;
+  purchase_unit_cost: string;
+  purchase_value: string;
+  additional_costs_total: string;
+  landed_total: string;
+  landed_unit_cost: string | null;
+  components: Array<{
+    id: string;
+    category: string;
+    amount: string;
+    currency: string | null;
+    exchange_rate: string;
+    base_currency_amount: string;
+    allocation_basis: string;
+  }>;
+};
+
+type LandedCostDocumentRow = Named & {
+  company?: string;
+  document_number?: string;
+  reference?: string;
+  lot?: string | null;
+  currency?: string | null;
+  status?: string;
+  purchase_quantity?: string;
+  purchase_unit_cost?: string;
+  purchase_value?: string;
+  notes?: string;
+  components?: LandedCostComponentRow[];
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TypedOption = { id: string; code: string; label: string };
+
+export async function listTypedUoms(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { symbol?: string }>(PHASE1_TYPED_API.uoms);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code ?? r.id,
+    label: [r.code, r.name || r.symbol].filter(Boolean).join(" - "),
+  }));
+}
+
+export async function listTypedCurrencies(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { symbol?: string }>(PHASE1_TYPED_API.currencies);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code ?? r.id,
+    label: [r.code, r.name || r.symbol].filter(Boolean).join(" - "),
+  }));
+}
+
+type SupplierRow = Named & {
+  country?: string;
+  address?: string;
+  contact_name?: string;
+  email?: string;
+  phone?: string;
+  tax_id?: string;
+  payment_terms?: string;
+  quality_status?: string;
+  quality_rating?: string | null;
+  notes?: string;
+};
+
+function mapTypedSupplier(r: SupplierRow): ErpRecord {
+  return baseRecord(
+    "suppliers",
+    r.id,
+    r.code ?? r.id,
+    r.trading_name || r.legal_name || r.code || "Supplier",
+    r.is_active === false ? "inactive" : "active",
+    {
+      name: r.legal_name,
+      displayName: r.trading_name,
+      country: r.country,
+      address: r.address,
+      contactPerson: r.contact_name,
+      email: r.email,
+      phone: r.phone,
+      pan: r.tax_id,
+      paymentTerms: r.payment_terms,
+      qualityStatus: r.quality_status,
+      qualityRating: r.quality_rating,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedSuppliers(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<SupplierRow>(
+    M2_TYPED_PATHS.vendors,
+    cleanListQuery(query, ["company", "search", "quality_status", "is_active"]),
+  );
+  return rows.map(mapTypedSupplier);
+}
+
+export async function getTypedSupplier(id: string): Promise<ErpRecord> {
+  const row = await apiFetch<SupplierRow>(`${M2_TYPED_PATHS.vendors}${id}/`, { silent: true });
+  return mapTypedSupplier(row);
+}
+
+function supplierBody(partial: Partial<ErpRecord>, fallbackCode?: string) {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  return {
+    code: String(partial.code || fallbackCode || "").trim() || undefined,
+    legal_name: String(fields.name || partial.title || "").trim(),
+    trading_name: String(fields.displayName || partial.title || fields.name || "").trim(),
+    country: String(fields.country || ""),
+    contact_name: String(fields.contactPerson || ""),
+    email: String(fields.email || ""),
+    phone: String(fields.phone || ""),
+    tax_id: String(fields.pan || ""),
+    payment_terms: String(fields.paymentTerms || ""),
+    notes: String(fields.notes || ""),
+    is_active: partial.status !== "inactive",
+  };
+}
+
+export async function createTypedSupplier(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const body = { ...supplierBody(partial, partial.code), company };
+  if (!body.legal_name) throw new Error("Supplier name is required.");
+  const created = await apiFetch<Named & { country?: string; email?: string; phone?: string; payment_terms?: string }>(
+    M2_TYPED_PATHS.vendors,
+    { method: "POST", body },
+  );
+  return (await listTypedSuppliers()).find((row) => row.id === created.id) ?? baseRecord(
+    "suppliers",
+    created.id,
+    created.code ?? String(body.code ?? created.id),
+    created.trading_name || created.legal_name || String(body.legal_name),
+    created.is_active === false ? "inactive" : "active",
+    { ...body, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
+  );
+}
+
+export async function updateTypedSupplier(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const body = supplierBody(partial);
+  delete body.code;
+  const updated = await apiFetch<Named>(`${M2_TYPED_PATHS.vendors}${id}/`, {
+    method: "PATCH",
+    body,
+  });
+  return (await listTypedSuppliers()).find((row) => row.id === updated.id) ?? baseRecord(
+    "suppliers",
+    updated.id,
+    updated.code ?? id,
+    updated.trading_name || updated.legal_name || "Supplier",
+    updated.is_active === false ? "inactive" : "active",
+    { ...body, typedId: updated.id },
+    [],
+    updated.created_at,
+    updated.updated_at,
   );
 }
 
 export async function listTypedProducts(): Promise<ErpRecord[]> {
-  const [items, balanceRows] = await Promise.all([
-    listRows<Named & { item_type?: string; qc_required?: boolean }>(M2_TYPED_PATHS.items),
-    listRows<{ item?: string; item_sku?: string; sku?: string; on_hand?: string; available_to_consume?: string; available?: string; reserved?: string; qc_hold?: string }>(
-      PHASE2_TYPED_API.balances,
-    ).catch(() => []),
-  ]);
-  const balBySku = new Map(
-    balanceRows.map((b) => [
-      String(b.item_sku ?? b.sku ?? ""),
-      {
-        onHand: Number(b.on_hand ?? b.available ?? 0),
-        available: Number(b.available_to_consume ?? b.available ?? 0),
-        reserved: Number(b.reserved ?? 0),
-        qcHold: Number(b.qc_hold ?? 0),
-      },
-    ]),
-  );
+  const items = await listRows<Named & { item_type?: string; qc_required?: boolean }>(M2_TYPED_PATHS.items);
   return items.map((r) => {
     const sku = r.sku ?? r.code ?? r.id;
-    const bal = balBySku.get(sku) ?? { onHand: 0, available: 0, reserved: 0, qcHold: 0 };
     return baseRecord(
       "products",
       r.id,
@@ -127,10 +695,6 @@ export async function listTypedProducts(): Promise<ErpRecord[]> {
         name: r.name,
         type: r.item_type,
         qcRequired: r.qc_required,
-        onHand: bal.onHand || bal.available,
-        available: bal.available,
-        reserved: bal.reserved,
-        qcHold: bal.qcHold,
         typedId: r.id,
       },
       [],
@@ -154,6 +718,59 @@ export async function listTypedWarehouses(): Promise<ErpRecord[]> {
       r.created_at,
       r.updated_at,
     ),
+  );
+}
+
+function warehouseBody(partial: Partial<ErpRecord>, fallbackCode?: string) {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const name = String(fields.name || partial.title || "").trim();
+  return {
+    code: String(partial.code || fallbackCode || "").trim() || undefined,
+    name,
+    address: String(fields.location || fields.address || ""),
+    is_active: partial.status !== "inactive",
+  };
+}
+
+export async function createTypedWarehouse(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const body = { ...warehouseBody(partial, partial.code), company };
+  if (!body.name) throw new Error("Warehouse name is required.");
+  const created = await apiFetch<Named & { address?: string }>(M2_TYPED_PATHS.facilities, {
+    method: "POST",
+    body,
+  });
+  return baseRecord(
+    "warehouses",
+    created.id,
+    created.code ?? String(body.code ?? created.id),
+    created.name || body.name,
+    created.is_active === false ? "inactive" : "active",
+    { name: created.name || body.name, location: created.address || body.address, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
+  );
+}
+
+export async function updateTypedWarehouse(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const body = warehouseBody(partial);
+  delete body.code;
+  const updated = await apiFetch<Named & { address?: string }>(`${M2_TYPED_PATHS.facilities}${id}/`, {
+    method: "PATCH",
+    body,
+  });
+  return baseRecord(
+    "warehouses",
+    updated.id,
+    updated.code ?? id,
+    updated.name || String(body.name || "Warehouse"),
+    updated.is_active === false ? "inactive" : "active",
+    { name: updated.name || body.name, location: updated.address || body.address, typedId: updated.id },
+    [],
+    updated.created_at,
+    updated.updated_at,
   );
 }
 
@@ -181,6 +798,96 @@ export async function listTypedBins(): Promise<ErpRecord[]> {
   );
 }
 
+async function resolveWarehouseId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Warehouse is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedWarehouses();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw);
+  if (!hit) throw new Error(`Warehouse "${raw}" not found.`);
+  return hit.id;
+}
+
+async function resolveSupplierId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Supplier is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedSuppliers();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Supplier "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+async function resolveProductId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Item is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedProducts();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Item "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+async function resolveCustomerId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Customer is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const { listTypedCustomers } = await import("./crm");
+  const rows = await listTypedCustomers();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.title === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Customer "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+async function resolvePurchaseUomId(ref: unknown): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("UOM is required.");
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedUoms();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.label === raw);
+  if (!hit) throw new Error(`UOM "${raw}" not found.`);
+  return hit.id;
+}
+
+async function resolveCurrencyId(ref: unknown): Promise<string | undefined> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) return undefined;
+  if (/^[0-9a-f-]{32,36}$/i.test(raw)) return raw;
+  const rows = await listTypedCurrencies();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || r.label === raw);
+  if (!hit) throw new Error(`Currency "${raw}" not found.`);
+  return hit.id;
+}
+
+export async function createTypedBin(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const warehouse = await resolveWarehouseId(fields.warehouse);
+  const code = String(fields.name || partial.code || "").trim();
+  if (!code) throw new Error("Bin code is required.");
+  const body = {
+    warehouse,
+    code,
+    name: String(fields.title || ""),
+    bin_type: String(fields.zone || "GENERAL").toUpperCase().replace(/\s+/g, "_"),
+    is_active: partial.status !== "inactive",
+  };
+  const created = await apiFetch<Named & { warehouse?: string; bin_type?: string }>(M2_TYPED_PATHS.storageBins, {
+    method: "POST",
+    body,
+  });
+  return baseRecord(
+    "bins",
+    created.id,
+    created.code ?? code,
+    created.code || code,
+    created.is_active === false ? "inactive" : "active",
+    { name: created.code ?? code, warehouse: created.warehouse ?? warehouse, zone: created.bin_type ?? body.bin_type, typedId: created.id },
+    [],
+    created.created_at,
+    created.updated_at,
+  );
+}
+
 const PO_STATUS: Record<string, DocStatus> = {
   DRAFT: "draft",
   SUBMITTED: "pending_approval",
@@ -192,8 +899,132 @@ const PO_STATUS: Record<string, DocStatus> = {
   CANCELLED: "cancelled",
 };
 
-export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
-  const rows = await listRows<
+function mapTypedPurchaseOrder(r: PurchaseOrderRow): ErpRecord {
+  const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
+    id: l.id || `l-${i}`,
+    item: l.item_sku || String(l.item ?? ""),
+    description: l.item_name ?? l.notes ?? "",
+    uom: l.uom_code || String(l.uom ?? ""),
+    warehouse: l.destination_warehouse ?? undefined,
+    qty: Number(l.ordered_quantity ?? 0),
+    rate: Number(l.unit_price ?? 0),
+    discountPct: Number(l.discount_pct ?? 0),
+    taxPct: Number(l.tax_pct ?? 0),
+  }));
+  const record = baseRecord(
+    "purchase_orders",
+    r.id,
+    r.document_number ?? r.id,
+    r.notes || r.document_number || "Purchase Order",
+    r.status ?? "draft",
+    {
+      supplier: r.supplier,
+      supplierName: r.supplier_name || r.supplier_code,
+      currency: r.currency_code,
+      currencyId: r.currency,
+      exchangeRate: r.exchange_rate,
+      incoterm: r.incoterm,
+      namedPlace: r.named_place,
+      destinationWarehouse: r.destination_warehouse,
+      paymentTerms: r.payment_terms,
+      deliveryDate: r.expected_delivery_date ?? undefined,
+      expectedDeliveryDate: r.expected_delivery_date ?? undefined,
+      revisionNo: r.revision_no,
+      approvedAt: r.approved_at,
+      closedAt: r.closed_at,
+      notes: r.notes,
+      serverStatus: r.status,
+      typedId: r.id,
+      typedPurchaseOrderId: r.id,
+    },
+    lines,
+    r.created_at,
+    r.updated_at,
+  );
+  return { ...record, status: PO_STATUS[String(r.status ?? "").toUpperCase()] ?? record.status };
+}
+
+export async function listTypedPurchaseOrders(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<PurchaseOrderRow>(
+    PHASE3_TYPED_API.purchaseOrders,
+    cleanListQuery(query, ["company", "supplier", "status", "search", "page", "page_size"]),
+  );
+  return rows.map(mapTypedPurchaseOrder);
+}
+
+async function resolveTypedDetailId(entity: string, ref: string): Promise<string> {
+  const raw = String(ref ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  if (UUID_RE.test(raw)) return raw;
+  let rows: ErpRecord[] = [];
+  if (entity === "purchase_orders") rows = await listTypedPurchaseOrders();
+  else if (entity === "proforma_invoices") rows = await listTypedProformaInvoices();
+  else if (entity === "letters_of_credit") rows = await listTypedLettersOfCredit();
+  else if (entity === "shipments") rows = await listTypedShipments();
+  else if (entity === "gate_entries") rows = await listTypedGateEntries();
+  else if (entity === "grns") rows = await listTypedGrns();
+  else if (entity === "qc_inspections") rows = await listTypedInspections();
+  else if (entity === "landed_cost_documents") rows = await listTypedLandedCostDocuments();
+  else if (entity === "sales_orders") rows = await listTypedSalesOrders();
+  else if (entity === "deliveries") rows = await listTypedDispatches();
+  else if (entity === "invoices") rows = await listTypedInvoices();
+  const hit = rows.find((r) => r.id === raw || r.code === raw || String(r.fields?.typedId) === raw);
+  if (!hit) throw new Error(`Record "${raw}" not found.`);
+  return String(hit.fields?.typedId ?? hit.id);
+}
+
+export async function getTypedPurchaseOrder(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("purchase_orders", id);
+  const row = await apiFetch<PurchaseOrderRow>(`${PHASE3_TYPED_API.purchaseOrders}${pk}/`, { silent: true });
+  return mapTypedPurchaseOrder(row);
+}
+
+export async function createTypedPurchaseOrder(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const destinationWarehouseRef = fields.destinationWarehouse ?? fields.destination_warehouse;
+  const destinationWarehouse = destinationWarehouseRef ? await resolveWarehouseId(destinationWarehouseRef) : undefined;
+  const lines = partial.lines ?? [];
+  if (!lines.length) throw new Error("Add at least one purchase order line.");
+
+  const body: Record<string, unknown> = {
+    company,
+    supplier: await resolveSupplierId(fields.supplier),
+    exchange_rate: String(fields.exchangeRate ?? fields.exchange_rate ?? 1),
+    named_place: String(fields.namedPlace ?? fields.named_place ?? ""),
+    payment_terms: String(fields.paymentTerms ?? fields.payment_terms ?? ""),
+    notes: String(fields.notes ?? partial.title ?? ""),
+    lines: await Promise.all(
+      lines.map(async (line) => {
+        const lineWarehouseRef = line.warehouse || destinationWarehouseRef;
+        const item = await resolveProductId(line.item);
+        const uom = await resolvePurchaseUomId(line.uom);
+        const orderedQuantity = Number(line.qty);
+        if (!Number.isFinite(orderedQuantity) || orderedQuantity <= 0) throw new Error("Ordered quantity must be greater than zero.");
+        const unitPrice = Number(line.rate);
+        if (!Number.isFinite(unitPrice) || unitPrice < 0) throw new Error("Unit price cannot be negative.");
+        const row: Record<string, unknown> = {
+          item,
+          uom,
+          ordered_quantity: String(orderedQuantity),
+          unit_price: String(unitPrice),
+          discount_pct: String(Number(line.discountPct ?? 0) || 0),
+          tax_pct: String(Number(line.taxPct ?? 0) || 0),
+          notes: line.description ?? "",
+        };
+        if (lineWarehouseRef) row.destination_warehouse = await resolveWarehouseId(lineWarehouseRef);
+        return row;
+      }),
+    ),
+  };
+  const currency = await resolveCurrencyId(fields.currency);
+  if (currency) body.currency = currency;
+  if (fields.incoterm) body.incoterm = fields.incoterm;
+  if (destinationWarehouse) body.destination_warehouse = destinationWarehouse;
+  if (fields.expectedDeliveryDate || fields.deliveryDate) body.expected_delivery_date = fields.expectedDeliveryDate ?? fields.deliveryDate;
+
+  const created = await apiFetch<
     Named & {
       supplier?: string;
       supplier_code?: string;
@@ -215,138 +1046,139 @@ export async function listTypedPurchaseOrders(): Promise<ErpRecord[]> {
         uom_code?: string;
       }>;
     }
-  >(PHASE3_TYPED_API.purchaseOrders);
-  return rows.map((r) => {
-    const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
-      id: l.id || `l-${i}`,
-      item: l.item_sku || String(l.item ?? ""),
-      description: l.item_name ?? "",
-      uom: l.uom_code || String(l.uom ?? ""),
-      qty: Number(l.ordered_quantity ?? 0),
-      rate: Number(l.unit_price ?? 0),
-      discountPct: Number(l.discount_pct ?? 0),
-      taxPct: Number(l.tax_pct ?? 0),
-    }));
-    const record = baseRecord(
-      "purchase_orders",
-      r.id,
-      r.document_number ?? r.id,
-      r.notes || r.document_number || "Purchase Order",
-      r.status ?? "draft",
-      {
-        supplier: r.supplier,
-        supplierName: r.supplier_name || r.supplier_code,
-        currency: r.currency_code,
-        paymentTerms: r.payment_terms,
-        deliveryDate: r.expected_delivery_date ?? undefined,
-        serverStatus: r.status,
-        typedId: r.id,
-        typedPurchaseOrderId: r.id,
-      },
-      lines,
-      r.created_at,
-      r.updated_at,
-    );
-    return { ...record, status: PO_STATUS[String(r.status ?? "").toUpperCase()] ?? record.status };
-  });
+  >(PHASE3_TYPED_API.purchaseOrders, { method: "POST", body, silent: true });
+
+  const createdLines: LineItem[] = (created.lines ?? []).map((line, i) => ({
+    id: line.id || `l-${i}`,
+    item: line.item_sku || String(line.item ?? ""),
+    description: line.item_name ?? "",
+    uom: line.uom_code || String(line.uom ?? ""),
+    qty: Number(line.ordered_quantity ?? 0),
+    rate: Number(line.unit_price ?? 0),
+    discountPct: Number(line.discount_pct ?? 0),
+    taxPct: Number(line.tax_pct ?? 0),
+  }));
+  const record = baseRecord(
+    "purchase_orders",
+    created.id,
+    created.document_number ?? created.id,
+    created.notes || created.document_number || "Purchase Order",
+    created.status ?? "DRAFT",
+    {
+      supplier: created.supplier,
+      supplierName: created.supplier_name || created.supplier_code,
+      currency: created.currency_code,
+      paymentTerms: created.payment_terms,
+      deliveryDate: created.expected_delivery_date ?? undefined,
+      serverStatus: created.status,
+      typedId: created.id,
+      typedPurchaseOrderId: created.id,
+    },
+    createdLines,
+    created.created_at,
+    created.updated_at,
+  );
+  return { ...record, status: PO_STATUS[String(created.status ?? "").toUpperCase()] ?? record.status };
 }
 
-export async function listTypedProformaInvoices(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      purchase_order?: string;
-      supplier?: string;
-      seller_pi_number?: string;
-      currency_code?: string;
-      total_amount?: string;
-      payment_terms?: string;
-      lead_time_days?: number;
-      expected_delivery_date?: string;
-      notes?: string;
-      attachment_url?: string;
-    }
-  >(PHASE3_TYPED_API.proformaInvoices);
-  return rows.map((r) =>
-    baseRecord(
-      "proforma_invoices",
-      r.id,
-      r.document_number ?? r.id,
-      r.seller_pi_number || r.document_number || "Proforma Invoice",
-      r.status ?? "DRAFT",
-      {
-        purchaseOrder: r.purchase_order,
-        supplier: r.supplier,
-        sellerPiNumber: r.seller_pi_number,
-        currencyCode: r.currency_code,
-        totalAmount: Number(r.total_amount ?? 0),
-        paymentTerms: r.payment_terms,
-        leadTimeDays: r.lead_time_days,
-        expectedDeliveryDate: r.expected_delivery_date,
-        notes: r.notes,
-        attachmentUrl: r.attachment_url,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+function mapTypedProformaInvoice(r: ProformaInvoiceRow): ErpRecord {
+  return baseRecord(
+    "proforma_invoices",
+    r.id,
+    r.document_number ?? r.id,
+    r.seller_pi_number || r.document_number || "Proforma Invoice",
+    r.status ?? "DRAFT",
+    {
+      purchaseOrder: r.purchase_order,
+      supplier: r.supplier,
+      sellerPiNumber: r.seller_pi_number,
+      currencyCode: r.currency_code,
+      totalAmount: Number(r.total_amount ?? 0),
+      paymentTerms: r.payment_terms,
+      leadTimeDays: r.lead_time_days,
+      expectedDeliveryDate: r.expected_delivery_date,
+      notes: r.notes,
+      attachmentUrl: r.attachment_url,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
   );
 }
 
-export async function listTypedLettersOfCredit(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      purchase_order?: string;
-      proforma_invoice?: string;
-      supplier?: string;
-      bank_name?: string;
-      lc_number?: string;
-      currency_code?: string;
-      amount?: string;
-      match_result?: Record<string, unknown>;
-      pre_dispatch_message?: string;
-      draft_scan_url?: string;
-      notes?: string;
-      gate_allowed?: boolean;
-      gate_message?: string;
-    }
-  >(PHASE3_TYPED_API.lettersOfCredit);
-  return rows.map((r) => {
-    const match = r.match_result ?? {};
-    const issues = Array.isArray(match.issues) ? match.issues : [];
-    const matchSummary =
-      match.passed === true
-        ? "Match passed (PO + PI)."
-        : match.passed === false
-          ? `Match failed: ${issues.map((i: { message?: string }) => i.message).filter(Boolean).join(" ")}`
-          : "";
-    return baseRecord(
-      "letters_of_credit",
-      r.id,
-      r.document_number ?? r.id,
-      r.bank_name || r.document_number || "Letter of Credit",
-      r.status ?? "DRAFT",
-      {
-        purchaseOrder: r.purchase_order,
-        proformaInvoice: r.proforma_invoice,
-        supplier: r.supplier,
-        bankName: r.bank_name,
-        lcNumber: r.lc_number,
-        currencyCode: r.currency_code,
-        amount: Number(r.amount ?? 0),
-        draftScanUrl: r.draft_scan_url,
-        matchSummary,
-        preDispatchMessage: r.pre_dispatch_message,
-        gateAllowed: r.gate_allowed,
-        gateMessage: r.gate_message,
-        notes: r.notes,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    );
-  });
+export async function listTypedProformaInvoices(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<ProformaInvoiceRow>(
+    PHASE3_TYPED_API.proformaInvoices,
+    cleanListQuery(query, ["company", "supplier", "purchase_order", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedProformaInvoice);
+}
+
+export async function getTypedProformaInvoice(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("proforma_invoices", id);
+  const row = await apiFetch<ProformaInvoiceRow>(`${PHASE3_TYPED_API.proformaInvoices}${pk}/`, { silent: true });
+  return mapTypedProformaInvoice(row);
+}
+
+function mapTypedLetterOfCredit(r: LetterOfCreditRow): ErpRecord {
+  const match = r.match_result ?? {};
+  const issues = Array.isArray(match.issues) ? match.issues : [];
+  const matchSummary =
+    match.passed === true
+      ? "Match passed (PO + PI)."
+      : match.passed === false
+        ? `Match failed: ${issues.map((i: { message?: string }) => i.message).filter(Boolean).join(" ")}`
+        : "";
+  return baseRecord(
+    "letters_of_credit",
+    r.id,
+    r.document_number ?? r.id,
+    r.bank_name || r.document_number || "Letter of Credit",
+    r.status ?? "DRAFT",
+    {
+      purchaseOrder: r.purchase_order,
+      proformaInvoice: r.proforma_invoice,
+      supplier: r.supplier,
+      bankName: r.bank_name,
+      lcNumber: r.lc_number,
+      finalLcNumber: r.final_lc_number,
+      currencyCode: r.currency_code,
+      amount: Number(r.amount ?? 0),
+      expiryDate: r.expiry_date,
+      latestShipmentDate: r.latest_shipment_date,
+      draftScanUrl: r.draft_scan_url,
+      draftExtracted: r.draft_extracted,
+      matchResult: r.match_result,
+      matchSummary,
+      sellerApprovalNote: r.seller_approval_note,
+      documentChecklist: r.document_checklist,
+      preDispatchMessage: r.pre_dispatch_message,
+      gateAllowed: r.gate_allowed,
+      gateMessage: r.gate_message,
+      notes: r.notes,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedLettersOfCredit(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<LetterOfCreditRow>(
+    PHASE3_TYPED_API.lettersOfCredit,
+    cleanListQuery(query, ["company", "supplier", "purchase_order", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedLetterOfCredit);
+}
+
+export async function getTypedLetterOfCredit(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("letters_of_credit", id);
+  const row = await apiFetch<LetterOfCreditRow>(`${PHASE3_TYPED_API.lettersOfCredit}${pk}/`, { silent: true });
+  return mapTypedLetterOfCredit(row);
 }
 
 async function resolvePoId(ref: unknown): Promise<string> {
@@ -369,47 +1201,66 @@ async function resolvePiId(ref: unknown): Promise<string | undefined> {
   return String(hit.fields?.typedId ?? hit.id);
 }
 
+export async function listTypedIncoterms(): Promise<TypedOption[]> {
+  const rows = await listRows<Named & { code?: string; name?: string }>(PHASE1_TYPED_API.incoterms);
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code || r.name || r.id,
+    label: [r.code, r.name].filter(Boolean).join(" - ") || r.id,
+  }));
+}
+
 export async function createTypedProformaInvoice(partial: Partial<ErpRecord>): Promise<ErpRecord> {
   const { resolveDefaultCompanyId } = await import("./crm");
   const company = await resolveDefaultCompanyId();
   const fields = (partial.fields ?? {}) as Record<string, unknown>;
   const poId = await resolvePoId(fields.purchaseOrder ?? fields.typedPurchaseOrderId);
-  const body: Record<string, unknown> = {
-    company,
-    purchase_order: poId,
-    seller_pi_number: String(fields.sellerPiNumber ?? ""),
-    currency_code: String(fields.currencyCode ?? "USD"),
-    total_amount: String(fields.totalAmount ?? 0),
-    payment_terms: String(fields.paymentTerms ?? ""),
-    notes: String(fields.notes ?? partial.title ?? ""),
-    attachment_url: String(fields.attachmentUrl ?? ""),
-  };
-  if (fields.supplier) body.supplier = fields.supplier;
-  if (fields.leadTimeDays != null && fields.leadTimeDays !== "") body.lead_time_days = Number(fields.leadTimeDays);
-  if (fields.expectedDeliveryDate) body.expected_delivery_date = fields.expectedDeliveryDate;
+  const body = await proformaInvoicePayload(fields, company, partial.title);
 
-  const created = await apiFetch<Named & { seller_pi_number?: string; total_amount?: string; purchase_order?: string }>(
+  const created = await apiFetch<ProformaInvoiceRow>(
     PHASE3_TYPED_API.proformaInvoices,
     { method: "POST", body },
   );
-  return baseRecord(
-    "proforma_invoices",
-    created.id,
-    created.document_number ?? created.id,
-    created.seller_pi_number || created.document_number || "Proforma Invoice",
-    created.status ?? "RECEIVED",
-    {
-      purchaseOrder: created.purchase_order ?? poId,
-      sellerPiNumber: created.seller_pi_number,
-      totalAmount: Number(created.total_amount ?? fields.totalAmount ?? 0),
-      currencyCode: fields.currencyCode,
-      leadTimeDays: fields.leadTimeDays,
-      typedId: created.id,
-    },
-    [],
-    created.created_at,
-    created.updated_at,
-  );
+  return mapTypedProformaInvoice({ ...created, purchase_order: created.purchase_order ?? poId });
+}
+
+async function proformaInvoicePayload(
+  fields: Record<string, unknown>,
+  company?: string,
+  fallbackNotes?: string,
+): Promise<Record<string, unknown>> {
+  const poId = await resolvePoId(fields.purchaseOrder ?? fields.purchase_order ?? fields.typedPurchaseOrderId);
+  const body: Record<string, unknown> = {
+    company,
+    purchase_order: poId,
+    seller_pi_number: String(fields.sellerPiNumber ?? fields.seller_pi_number ?? ""),
+    currency_code: String(fields.currencyCode ?? fields.currency_code ?? "USD"),
+    total_amount: String(fields.totalAmount ?? fields.total_amount ?? 0),
+    payment_terms: String(fields.paymentTerms ?? fields.payment_terms ?? ""),
+    notes: String(fields.notes ?? fallbackNotes ?? ""),
+    attachment_url: String(fields.attachmentUrl ?? fields.attachment_url ?? ""),
+  };
+  if (!company) delete body.company;
+  if (fields.supplier) body.supplier = await resolveSupplierId(fields.supplier);
+  if (fields.leadTimeDays != null && fields.leadTimeDays !== "") body.lead_time_days = Number(fields.leadTimeDays);
+  else if ("leadTimeDays" in fields || "lead_time_days" in fields) body.lead_time_days = null;
+  if (fields.expectedDeliveryDate || fields.expected_delivery_date) {
+    body.expected_delivery_date = fields.expectedDeliveryDate ?? fields.expected_delivery_date;
+  } else if ("expectedDeliveryDate" in fields || "expected_delivery_date" in fields) {
+    body.expected_delivery_date = null;
+  }
+  return body;
+}
+
+export async function updateTypedProformaInvoice(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("proforma_invoices", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<ProformaInvoiceRow>(`${PHASE3_TYPED_API.proformaInvoices}${pk}/`, {
+    method: "PATCH",
+    body: await proformaInvoicePayload(fields, undefined, partial.title),
+    silent: true,
+  });
+  return mapTypedProformaInvoice(updated);
 }
 
 export async function createTypedLetterOfCredit(partial: Partial<ErpRecord>): Promise<ErpRecord> {
@@ -417,133 +1268,263 @@ export async function createTypedLetterOfCredit(partial: Partial<ErpRecord>): Pr
   const company = await resolveDefaultCompanyId();
   const fields = (partial.fields ?? {}) as Record<string, unknown>;
   const poId = await resolvePoId(fields.purchaseOrder ?? fields.typedPurchaseOrderId);
-  const piId = await resolvePiId(fields.proformaInvoice);
-  const body: Record<string, unknown> = {
-    company,
-    purchase_order: poId,
-    bank_name: String(fields.bankName ?? ""),
-    lc_number: String(fields.lcNumber ?? ""),
-    currency_code: String(fields.currencyCode ?? "USD"),
-    amount: String(fields.amount ?? 0),
-    notes: String(fields.notes ?? partial.title ?? ""),
-  };
-  if (piId) body.proforma_invoice = piId;
-  if (fields.supplier) body.supplier = fields.supplier;
-  if (fields.expiryDate) body.expiry_date = fields.expiryDate;
-  if (fields.latestShipmentDate) body.latest_shipment_date = fields.latestShipmentDate;
+  const body = await letterOfCreditPayload(fields, company, partial.title);
 
-  const created = await apiFetch<Named & { bank_name?: string; amount?: string; purchase_order?: string }>(
+  const created = await apiFetch<LetterOfCreditRow>(
     PHASE3_TYPED_API.lettersOfCredit,
     { method: "POST", body },
   );
-  return baseRecord(
-    "letters_of_credit",
-    created.id,
-    created.document_number ?? created.id,
-    created.bank_name || created.document_number || "Letter of Credit",
-    created.status ?? "DRAFT",
+  return mapTypedLetterOfCredit({ ...created, purchase_order: created.purchase_order ?? poId });
+}
+
+async function letterOfCreditPayload(
+  fields: Record<string, unknown>,
+  company?: string,
+  fallbackNotes?: string,
+): Promise<Record<string, unknown>> {
+  const poId = await resolvePoId(fields.purchaseOrder ?? fields.purchase_order ?? fields.typedPurchaseOrderId);
+  const piId = await resolvePiId(fields.proformaInvoice ?? fields.proforma_invoice);
+  const body: Record<string, unknown> = {
+    company,
+    purchase_order: poId,
+    bank_name: String(fields.bankName ?? fields.bank_name ?? ""),
+    lc_number: String(fields.lcNumber ?? fields.lc_number ?? ""),
+    currency_code: String(fields.currencyCode ?? fields.currency_code ?? "USD"),
+    amount: String(fields.amount ?? 0),
+    notes: String(fields.notes ?? fallbackNotes ?? ""),
+  };
+  if (!company) delete body.company;
+  if (piId) body.proforma_invoice = piId;
+  if (fields.supplier) body.supplier = await resolveSupplierId(fields.supplier);
+  if (fields.expiryDate || fields.expiry_date) body.expiry_date = fields.expiryDate ?? fields.expiry_date;
+  else if ("expiryDate" in fields || "expiry_date" in fields) body.expiry_date = null;
+  if (fields.latestShipmentDate || fields.latest_shipment_date) {
+    body.latest_shipment_date = fields.latestShipmentDate ?? fields.latest_shipment_date;
+  } else if ("latestShipmentDate" in fields || "latest_shipment_date" in fields) {
+    body.latest_shipment_date = null;
+  }
+  if (fields.draftScanUrl || fields.draft_scan_url) body.draft_scan_url = fields.draftScanUrl ?? fields.draft_scan_url;
+  else if ("draftScanUrl" in fields || "draft_scan_url" in fields) body.draft_scan_url = "";
+  if (fields.sellerApprovalNote || fields.seller_approval_note) {
+    body.seller_approval_note = fields.sellerApprovalNote ?? fields.seller_approval_note;
+  } else if ("sellerApprovalNote" in fields || "seller_approval_note" in fields) {
+    body.seller_approval_note = "";
+  }
+  if (fields.finalLcNumber || fields.final_lc_number) body.final_lc_number = fields.finalLcNumber ?? fields.final_lc_number;
+  else if ("finalLcNumber" in fields || "final_lc_number" in fields) body.final_lc_number = "";
+  return body;
+}
+
+export async function updateTypedLetterOfCredit(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("letters_of_credit", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<LetterOfCreditRow>(`${PHASE3_TYPED_API.lettersOfCredit}${pk}/`, {
+    method: "PATCH",
+    body: await letterOfCreditPayload(fields, undefined, partial.title),
+    silent: true,
+  });
+  return mapTypedLetterOfCredit(updated);
+}
+
+function mapTypedShipment(r: ImportShipmentRow): ErpRecord {
+  const record = baseRecord(
+    "shipments",
+    r.id,
+    r.shipment_number ?? r.document_number ?? r.id,
+    r.shipment_number || r.purchase_reference || "Shipment",
+    r.is_active === false ? "inactive" : "active",
     {
-      purchaseOrder: created.purchase_order ?? poId,
-      proformaInvoice: piId,
-      bankName: created.bank_name ?? fields.bankName,
-      amount: Number(created.amount ?? fields.amount ?? 0),
-      currencyCode: fields.currencyCode,
-      typedId: created.id,
+      company: r.company,
+      supplier: r.supplier,
+      incoterm: r.incoterm,
+      namedPlace: r.named_place,
+      purchaseReference: r.purchase_reference,
+      purchaseOrder: r.purchase_order,
+      etd: r.etd,
+      eta: r.eta,
+      notes: r.notes,
+      isActive: r.is_active !== false,
+      typedId: r.id,
     },
     [],
-    created.created_at,
-    created.updated_at,
+    r.created_at,
+    r.updated_at,
   );
+  return {
+    ...record,
+    links: [
+      ...(r.purchase_order ? [{ entity: "purchase_orders", id: r.purchase_order }] : []),
+      ...(r.supplier ? [{ entity: "suppliers", id: r.supplier }] : []),
+    ],
+  };
 }
 
-export async function listTypedGateEntries(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      supplier?: string;
-      purchase_order?: string;
-      vehicle_number?: string;
-      driver_name?: string;
-      lc_gate_allowed?: boolean;
-      lc_gate_message?: string;
-      lc_id?: string | null;
-      lc_document_number?: string | null;
-      lc_status?: string | null;
-    }
-  >(PHASE2_TYPED_API.inboundGates);
-  return rows.map((r) =>
-    baseRecord(
-      "gate_entries",
-      r.id,
-      r.gate_entry_number ?? r.document_number ?? r.id,
-      r.gate_entry_number || "Gate Entry",
-      r.status ?? "draft",
-      {
-        supplier: r.supplier,
-        purchaseOrder: r.purchase_order,
-        vehicle: r.vehicle_number,
-        driver: r.driver_name,
-        typedId: r.id,
-        lcGateAllowed: r.lc_gate_allowed,
-        lcGateMessage: r.lc_gate_message,
-        lcId: r.lc_id,
-        lcDocumentNumber: r.lc_document_number,
-        lcStatus: r.lc_status,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+export async function listTypedShipments(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<ImportShipmentRow>(
+    PHASE2_TYPED_API.importShipments,
+    cleanListQuery(query, ["company", "supplier", "is_active", "search", "page", "page_size"]),
   );
+  return rows.map(mapTypedShipment);
 }
 
-export async function listTypedGrns(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      supplier?: string;
-      warehouse?: string;
-      gate_entry?: string;
-      lc_gate_allowed?: boolean;
-      lc_gate_message?: string;
-      lc_id?: string | null;
-      lc_document_number?: string | null;
-      lc_status?: string | null;
-      lines?: Array<{ item?: string; accepted_quantity?: string; lot_number?: string; purchase_unit_cost?: string }>;
-    }
-  >(PHASE2_TYPED_API.goodsReceipts);
-  return rows.map((r) => {
-    const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
-      id: `gl-${i}`,
-      item: String(l.item ?? ""),
-      description: "",
-      uom: "KG",
-      qty: Number(l.accepted_quantity ?? 0),
-      rate: Number(l.purchase_unit_cost ?? 0),
-      batch: l.lot_number,
-    }));
-    const accepted = lines.reduce((s, l) => s + l.qty, 0);
-    return baseRecord(
-      "grns",
-      r.id,
-      r.grn_number ?? r.document_number ?? r.id,
-      r.grn_number || "GRN",
-      r.status ?? "draft",
-      {
-        supplier: r.supplier,
-        warehouse: r.warehouse,
-        gateEntry: r.gate_entry,
-        acceptedQty: accepted,
-        typedId: r.id,
-        lcGateAllowed: r.lc_gate_allowed,
-        lcGateMessage: r.lc_gate_message,
-        lcId: r.lc_id,
-        lcDocumentNumber: r.lc_document_number,
-        lcStatus: r.lc_status,
-      },
-      lines,
-      r.created_at,
-      r.updated_at,
-    );
+export async function getTypedShipment(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("shipments", id);
+  const row = await apiFetch<ImportShipmentRow>(`${PHASE2_TYPED_API.importShipments}${pk}/`, { silent: true });
+  return mapTypedShipment(row);
+}
+
+function shipmentPayload(fields: Record<string, unknown>, company?: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    shipment_number: String(fields.shipmentNumber ?? fields.shipment_number ?? "").trim(),
+    supplier: String(fields.supplier ?? "").trim(),
+    named_place: String(fields.namedPlace ?? fields.named_place ?? ""),
+    purchase_reference: String(fields.purchaseReference ?? fields.purchase_reference ?? ""),
+    notes: String(fields.notes ?? ""),
+    is_active: fields.isActive ?? fields.is_active ?? true,
+  };
+  if (company) body.company = company;
+  if (fields.incoterm) body.incoterm = fields.incoterm;
+  if (fields.purchaseOrder) body.purchase_order = fields.purchaseOrder;
+  if (fields.etd) body.etd = fields.etd;
+  if (fields.eta) body.eta = fields.eta;
+  return body;
+}
+
+export async function createTypedShipment(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const body = shipmentPayload(fields, company);
+  if (!body.shipment_number) body.shipment_number = partial.code;
+  const created = await apiFetch<ImportShipmentRow>(PHASE2_TYPED_API.importShipments, {
+    method: "POST",
+    body,
+    silent: true,
   });
+  return mapTypedShipment(created);
+}
+
+export async function updateTypedShipment(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("shipments", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const updated = await apiFetch<ImportShipmentRow>(`${PHASE2_TYPED_API.importShipments}${pk}/`, {
+    method: "PATCH",
+    body: shipmentPayload(fields),
+    silent: true,
+  });
+  return mapTypedShipment(updated);
+}
+
+function mapTypedGateEntry(r: GateEntryRow): ErpRecord {
+  return baseRecord(
+    "gate_entries",
+    r.id,
+    r.gate_entry_number ?? r.document_number ?? r.id,
+    r.gate_entry_number || "Gate Entry",
+    r.status ?? "draft",
+    {
+      supplier: r.supplier,
+      shipment: r.shipment,
+      purchaseReference: r.purchase_reference,
+      purchaseOrder: r.purchase_order,
+      vehicle: r.vehicle_number,
+      driver: r.driver_name,
+      materialReference: r.material_reference,
+      quantityNote: r.quantity_note,
+      documentReferences: r.document_references,
+      remarks: r.remarks,
+      serverStatus: r.status,
+      typedId: r.id,
+      lcGateAllowed: r.lc_gate_allowed,
+      lcGateMessage: r.lc_gate_message,
+      lcId: r.lc_id,
+      lcDocumentNumber: r.lc_document_number,
+      lcStatus: r.lc_status,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedGateEntries(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<GateEntryRow>(
+    PHASE2_TYPED_API.inboundGates,
+    cleanListQuery(query, ["company", "supplier", "status", "search", "page", "page_size"]),
+  );
+  return rows.map(mapTypedGateEntry);
+}
+
+export async function getTypedGateEntry(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("gate_entries", id);
+  const row = await apiFetch<GateEntryRow>(`${PHASE2_TYPED_API.inboundGates}${pk}/`, { silent: true });
+  return mapTypedGateEntry(row);
+}
+
+function mapTypedGrn(r: GoodsReceiptRow): ErpRecord {
+  const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
+    id: l.id || `gl-${i}`,
+    item: String(l.item ?? ""),
+    description: [
+      l.line_notes,
+      l.supplier_lot_number ? `Supplier lot ${l.supplier_lot_number}` : "",
+      l.received_quantity ? `Received ${l.received_quantity}` : "",
+      l.rejected_quantity ? `Rejected ${l.rejected_quantity}` : "",
+      l.purchase_order_line ? `PO line ${l.purchase_order_line}` : "",
+      l.manufacturing_date ? `Mfg ${l.manufacturing_date}` : "",
+      l.expiry_date ? `Exp ${l.expiry_date}` : "",
+    ].filter(Boolean).join(" · "),
+    uom: String(l.uom ?? ""),
+    qty: Number(l.accepted_quantity ?? l.received_quantity ?? 0),
+    rate: Number(l.purchase_unit_cost ?? 0),
+    batch: l.lot_number,
+  }));
+  const accepted = lines.reduce((s, l) => s + l.qty, 0);
+  return baseRecord(
+    "grns",
+    r.id,
+    r.grn_number ?? r.document_number ?? r.id,
+    r.grn_number || "GRN",
+    r.status ?? "draft",
+    {
+      supplier: r.supplier,
+      warehouse: r.warehouse,
+      receivingBin: r.receiving_bin,
+      gateEntry: r.gate_entry,
+      shipment: r.shipment,
+      purchaseReference: r.purchase_reference,
+      receivedAt: r.received_at,
+      currency: r.currency,
+      postedAt: r.posted_at,
+      notes: r.notes,
+      acceptedQty: accepted,
+      receiptLines: r.lines ?? [],
+      serverStatus: r.status,
+      typedId: r.id,
+      lcGateAllowed: r.lc_gate_allowed,
+      lcGateMessage: r.lc_gate_message,
+      lcId: r.lc_id,
+      lcDocumentNumber: r.lc_document_number,
+      lcStatus: r.lc_status,
+    },
+    lines,
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedGrns(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<GoodsReceiptRow>(
+    PHASE2_TYPED_API.goodsReceipts,
+    cleanListQuery(query, ["company", "supplier", "status", "warehouse", "search", "page", "page_size"]),
+  );
+  return rows.map(mapTypedGrn);
+}
+
+export async function getTypedGrn(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("grns", id);
+  const row = await apiFetch<GoodsReceiptRow>(`${PHASE2_TYPED_API.goodsReceipts}${pk}/`, { silent: true });
+  return mapTypedGrn(row);
 }
 
 export async function listTypedBills(): Promise<ErpRecord[]> {
@@ -588,169 +1569,823 @@ export async function listTypedBills(): Promise<ErpRecord[]> {
   });
 }
 
-export async function listTypedSalesOrders(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      customer?: string;
-      notes?: string;
-      lines?: Array<{ id: string; item?: string; ordered_quantity?: string; unit_price?: string; reserved_quantity?: string }>;
-    }
-  >(PHASE3_TYPED_API.salesOrders);
-  return rows.map((r) => {
-    const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
-      id: l.id || `sl-${i}`,
-      item: String(l.item ?? ""),
-      description: "",
-      uom: "KG",
-      qty: Number(l.ordered_quantity ?? 0),
-      rate: Number(l.unit_price ?? 0),
-    }));
-    return baseRecord(
+async function fetchInventoryBalance(query: { company?: string; item?: string; warehouse?: string | null }): Promise<InventoryBalanceDto | undefined> {
+  if (!query.company || !query.item) return undefined;
+  return apiFetch<InventoryBalanceDto>(PHASE3_TYPED_API.balances, {
+    query: { company: query.company, item: query.item, warehouse: query.warehouse ?? undefined },
+    silent: true,
+  }).catch(() => undefined);
+}
+
+function salesStatus(raw: string | undefined): DocStatus {
+  const s = String(raw ?? "DRAFT").toUpperCase();
+  if (s === "DRAFT") return "draft";
+  if (s === "CONFIRMED" || s === "PARTIALLY_RESERVED" || s === "RESERVED") return "approved";
+  if (s === "PARTIALLY_DISPATCHED" || s === "PARTIALLY_INVOICED") return "in_progress";
+  if (s === "DISPATCHED" || s === "INVOICED" || s === "COMPLETED") return "completed";
+  if (s === "CANCELLED") return "cancelled";
+  return statusMap(raw);
+}
+
+function mapTypedSalesOrder(
+  r: SalesOrderRow,
+  balances: Record<string, InventoryBalanceDto | undefined> = {},
+  currencyCode?: string,
+): ErpRecord {
+  const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
+    id: l.id || `sl-${i}`,
+    item: String(l.item ?? ""),
+    description: l.notes || (balances[l.id]?.available_to_consume ? `Available to consume ${balances[l.id]?.available_to_consume}` : ""),
+    uom: String(l.uom ?? ""),
+    warehouse: String(l.warehouse ?? r.warehouse ?? ""),
+    qty: Number(l.ordered_quantity ?? 0),
+    rate: Number(l.unit_price ?? 0),
+    discountPct: Number(l.discount_pct ?? 0),
+    taxPct: Number(l.tax_pct ?? 0),
+  }));
+  const orderedQty = (r.lines ?? []).reduce((sum, l) => sum + Number(l.ordered_quantity ?? 0), 0);
+  const reservedQty = (r.lines ?? []).reduce((sum, l) => sum + Number(l.reserved_quantity ?? 0), 0);
+  const dispatchedQty = (r.lines ?? []).reduce((sum, l) => sum + Number(l.dispatched_quantity ?? 0), 0);
+  const invoicedQty = (r.lines ?? []).reduce((sum, l) => sum + Number(l.invoiced_quantity ?? 0), 0);
+  return {
+    ...baseRecord(
       "sales_orders",
       r.id,
       r.document_number ?? r.id,
-      r.notes || r.document_number || "Sales Order",
-      r.status ?? "draft",
+      r.document_number || "Sales Order",
+      r.status ?? "DRAFT",
       {
+        company: r.company,
         customer: r.customer,
+        customerName: r.customer,
+        currency: r.currency,
+        currencyCode: currencyCode || undefined,
+        warehouse: r.warehouse,
+        requestedDeliveryDate: r.requested_delivery_date,
+        deliveryDate: r.requested_delivery_date,
+        promisedDeliveryDate: r.promised_delivery_date,
+        paymentTerms: r.payment_terms,
+        customerReference: r.customer_reference,
+        pickStatus: r.pick_status,
+        packStatus: r.pack_status,
+        reservationStatus: r.status,
+        reservedQuantity: reservedQty,
+        orderedQuantity: orderedQty,
+        dispatchedQuantity: dispatchedQty,
+        invoicedQuantity: invoicedQty,
+        creditWarning: r.credit_warning,
+        notes: r.notes,
+        serverStatus: r.status,
+        lineAvailability: balances,
+        salesOrderLines: r.lines ?? [],
         typedId: r.id,
         typedSalesOrderId: r.id,
       },
       lines,
       r.created_at,
       r.updated_at,
-    );
+    ),
+    status: salesStatus(r.status),
+    links: [
+      ...(r.lines ?? []).map((line) => ({
+        entity: "stock_reservations",
+        id: String(line.id),
+        label: `Reservation reference ${line.line_no ?? ""}`.trim(),
+      })),
+    ],
+  };
+}
+
+export async function listTypedSalesOrders(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const [rows, currencies] = await Promise.all([
+    listRows<SalesOrderRow>(
+      PHASE3_TYPED_API.salesOrders,
+      cleanListQuery(query, ["company", "customer", "status", "page", "page_size"]),
+    ),
+    currencyCodeMap(),
+  ]);
+  return rows.map((r) => mapTypedSalesOrder(r, {}, currencies.get(String(r.currency ?? ""))));
+}
+
+export async function getTypedSalesOrder(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("sales_orders", id);
+  const [row, currencies] = await Promise.all([
+    apiFetch<SalesOrderRow>(`${PHASE3_TYPED_API.salesOrders}${pk}/`, { silent: true }),
+    currencyCodeMap(),
+  ]);
+  const balances = Object.fromEntries(
+    await Promise.all(
+      (row.lines ?? []).map(async (line) => [
+        line.id,
+        await fetchInventoryBalance({ company: row.company, item: line.item, warehouse: line.warehouse ?? row.warehouse }),
+      ]),
+    ),
+  );
+  return mapTypedSalesOrder(row, balances, currencies.get(String(row.currency ?? "")));
+}
+
+export async function createTypedSalesOrder(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const lines = partial.lines ?? [];
+  if (!lines.length) throw new Error("Add at least one sales order line.");
+  const body: Record<string, unknown> = {
+    company,
+    customer: await resolveCustomerId(fields.customer),
+    currency: await resolveCurrencyId(fields.currency),
+    warehouse: fields.warehouse ? await resolveWarehouseId(fields.warehouse) : undefined,
+    requested_delivery_date: fields.requestedDeliveryDate || fields.deliveryDate || null,
+    promised_delivery_date: fields.promisedDeliveryDate || null,
+    payment_terms: String(fields.paymentTerms ?? ""),
+    customer_reference: String(fields.customerReference ?? ""),
+    notes: String(fields.notes ?? fields.remarks ?? ""),
+    lines: await Promise.all(lines.map(async (line) => {
+      if (Number(line.qty) <= 0) throw new Error("Sales order quantity must be greater than zero.");
+      const row: Record<string, unknown> = {
+        item: await resolveProductId(line.item),
+        uom: await resolvePurchaseUomId(line.uom),
+        ordered_quantity: String(line.qty),
+        unit_price: String(line.rate ?? 0),
+        discount_pct: String(line.discountPct ?? 0),
+        tax_pct: String(line.taxPct ?? 0),
+        notes: String(line.description ?? ""),
+      };
+      if (line.warehouse) row.warehouse = await resolveWarehouseId(line.warehouse);
+      return row;
+    })),
+  };
+  if (!body.currency) delete body.currency;
+  if (!body.warehouse) delete body.warehouse;
+  const created = await apiFetch<SalesOrderRow>(PHASE3_TYPED_API.salesOrders, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+  return getTypedSalesOrder(created.id);
+}
+
+function mapTypedDispatch(r: DispatchNoteRow): ErpRecord {
+  const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
+    id: l.id || `dl-${i}`,
+    item: String(l.sales_order_line ?? ""),
+    salesOrderLineId: String(l.sales_order_line ?? ""),
+    description: `SO line ${l.sales_order_line ?? ""}`,
+    uom: String(l.uom ?? ""),
+    qty: Number(l.quantity ?? 0),
+    rate: 0,
+  }));
+  return baseRecord(
+    "deliveries",
+    r.id,
+    r.document_number ?? r.id,
+    r.document_number || "Dispatch",
+    r.status ?? "DRAFT",
+    {
+      salesOrder: r.sales_order,
+      warehouse: r.warehouse,
+      postedAt: r.posted_at,
+      notes: r.notes,
+      dispatchLines: r.lines ?? [],
+      typedId: r.id,
+      typedDispatchId: r.id,
+    },
+    lines,
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedDispatches(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<DispatchNoteRow>(
+    PHASE3_TYPED_API.dispatchNotes,
+    cleanListQuery(query, ["company", "sales_order", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedDispatch);
+}
+
+export async function getTypedDispatch(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("deliveries", id);
+  const row = await apiFetch<DispatchNoteRow>(`${PHASE3_TYPED_API.dispatchNotes}${pk}/`, { silent: true });
+  return mapTypedDispatch(row);
+}
+
+export async function createTypedDispatch(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const body: Record<string, unknown> = {
+    company,
+    sales_order: String(fields.salesOrder ?? ""),
+    warehouse: fields.warehouse ? await resolveWarehouseId(fields.warehouse) : undefined,
+    notes: String(fields.notes ?? ""),
+    lines: (partial.lines ?? []).map((line) => {
+      if (Number(line.qty) <= 0) throw new Error("Dispatch quantity must be greater than zero.");
+      return {
+        sales_order_line: line.salesOrderLineId || line.item,
+        quantity: String(line.qty),
+        uom: line.uom,
+      };
+    }),
+  };
+  if (!body.sales_order) throw new Error("Sales Order is required.");
+  if (!body.warehouse) delete body.warehouse;
+  const created = await apiFetch<DispatchNoteRow>(PHASE3_TYPED_API.dispatchNotes, { method: "POST", body, silent: true });
+  return getTypedDispatch(created.id);
+}
+
+function mapTypedInvoice(r: SalesInvoiceRow): ErpRecord {
+  const lines: LineItem[] = (r.lines ?? []).map((l, i) => ({
+    id: l.id || `il-${i}`,
+    item: String(l.item ?? ""),
+    salesOrderLineId: String(l.sales_order_line ?? ""),
+    description: l.sales_order_line ? `SO line ${l.sales_order_line}` : "",
+    uom: String(l.uom ?? ""),
+    qty: Number(l.quantity ?? 0),
+    rate: Number(l.unit_price ?? 0),
+    taxPct: Number(l.tax_pct ?? 0),
+  }));
+  return baseRecord(
+    "invoices",
+    r.id,
+    r.document_number ?? r.id,
+    r.document_number || "Sales Invoice",
+    r.status ?? "DRAFT",
+    {
+      customer: r.customer,
+      customerName: r.customer,
+      salesOrder: r.sales_order,
+      delivery: r.dispatch_note,
+      dispatchNote: r.dispatch_note,
+      currency: r.currency,
+      exchangeRate: r.exchange_rate,
+      invoiceDate: r.invoice_date,
+      dueDate: r.due_date,
+      commercialsFrozen: r.commercials_frozen,
+      subtotal: Number(r.subtotal ?? 0),
+      tax: Number(r.tax_total ?? 0),
+      amount: Number(r.total ?? 0),
+      invoiceTotal: Number(r.total ?? 0),
+      notes: r.notes,
+      postedAt: r.posted_at,
+      typedId: r.id,
+      typedInvoiceId: r.id,
+    },
+    lines,
+    r.invoice_date ?? r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedInvoices(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<SalesInvoiceRow>(
+    PHASE3_TYPED_API.salesInvoices,
+    cleanListQuery(query, ["company", "customer", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedInvoice);
+}
+
+export async function getTypedInvoice(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("invoices", id);
+  const row = await apiFetch<SalesInvoiceRow>(`${PHASE3_TYPED_API.salesInvoices}${pk}/`, { silent: true });
+  return mapTypedInvoice(row);
+}
+
+export async function createTypedInvoice(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const body: Record<string, unknown> = {
+    company,
+    customer: await resolveCustomerId(fields.customer),
+    sales_order: fields.salesOrder || undefined,
+    dispatch_note: fields.delivery || fields.dispatchNote || undefined,
+    currency: await resolveCurrencyId(fields.currency),
+    exchange_rate: String(fields.exchangeRate ?? 1),
+    invoice_date: fields.invoiceDate || undefined,
+    due_date: fields.dueDate || undefined,
+    notes: String(fields.notes ?? ""),
+    lines: await Promise.all((partial.lines ?? []).map(async (line) => {
+      if (Number(line.qty) <= 0) throw new Error("Invoice quantity must be greater than zero.");
+      return {
+        sales_order_line: line.salesOrderLineId || undefined,
+        item: await resolveProductId(line.item),
+        uom: await resolvePurchaseUomId(line.uom),
+        quantity: String(line.qty),
+        unit_price: String(line.rate ?? 0),
+        tax_pct: String(line.taxPct ?? 0),
+      };
+    })),
+  };
+  if (!body.currency) delete body.currency;
+  if (!body.dispatch_note) delete body.dispatch_note;
+  if (!body.sales_order) delete body.sales_order;
+  const created = await apiFetch<SalesInvoiceRow>(PHASE3_TYPED_API.salesInvoices, { method: "POST", body, silent: true });
+  return getTypedInvoice(created.id);
+}
+
+async function getTypedInventoryLot(id: string): Promise<InventoryLotRow | undefined> {
+  const raw = String(id ?? "").trim();
+  if (!raw) return undefined;
+  return apiFetch<InventoryLotRow>(`${M2_TYPED_PATHS.lots}${raw}/`, { silent: true }).catch(() => undefined);
+}
+
+function mapTypedInventoryLot(
+  r: InventoryLotRow,
+  related?: { layers?: InventoryReceiptLayerRow[]; ledger?: StockLedgerRow[]; putaways?: PutawayRow[] },
+): ErpRecord {
+  const fields = {
+    lotNumber: r.lot_number,
+    item: r.item,
+    supplier: r.supplier,
+    supplierLotNumber: r.supplier_lot_number,
+    manufacturingDate: r.manufacturing_date,
+    expiryDate: r.expiry_date,
+    receivedDate: r.received_date,
+    sourceGrnReference: r.source_grn_reference,
+    purchaseReference: r.purchase_reference,
+    certificateCoaReference: r.certificate_coa_reference,
+    warehouse: r.warehouse,
+    bin: r.bin,
+    lotStatus: r.status,
+    qcStatus: r.qc_status,
+    uom: r.uom,
+    initialQuantity: Number(r.initial_quantity ?? 0),
+    remainingQuantity: Number(r.remaining_quantity ?? 0),
+    currency: r.currency,
+    purchaseUnitCost: Number(r.purchase_unit_cost ?? 0),
+    landedUnitCost: r.landed_unit_cost == null ? undefined : Number(r.landed_unit_cost),
+    receiptLayers: related?.layers ?? [],
+    stockLedger: related?.ledger ?? [],
+    putaways: related?.putaways ?? [],
+    typedId: r.id,
+  };
+  return baseRecord(
+    "inventory_lots",
+    r.id,
+    r.lot_number ?? r.id,
+    [r.lot_number, r.item].filter(Boolean).join(" - ") || "Inventory Lot",
+    r.status ?? "RECEIVED",
+    fields,
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedInventoryLots(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<InventoryLotRow>(
+    M2_TYPED_PATHS.lots,
+    cleanListQuery(query, ["company", "item", "supplier", "status", "warehouse", "is_active", "search", "page", "page_size"]),
+  );
+  return rows.map((r) => mapTypedInventoryLot(r));
+}
+
+export async function getTypedInventoryLotRecord(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const lot = await apiFetch<InventoryLotRow>(`${M2_TYPED_PATHS.lots}${raw}/`, { silent: true });
+  const [layers, ledger, putaways] = await Promise.all([
+    listRows<InventoryReceiptLayerRow>(
+      M2_TYPED_PATHS.receiptLayers,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+    listRows<StockLedgerRow>(
+      PHASE2_TYPED_API.stockLedger,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+    listRows<PutawayRow>(
+      PHASE2_TYPED_API.putaways,
+      cleanListQuery({ lot: lot.id, page_size: 200 }, ["lot", "page_size"]),
+    ),
+  ]);
+  return mapTypedInventoryLot(lot, { layers, ledger, putaways });
+}
+
+function mapTypedInspection(r: QCInspectionRow, lot?: InventoryLotRow): ErpRecord {
+  const record = baseRecord(
+    "qc_inspections",
+    r.id,
+    r.inspection_number ?? r.id,
+    [r.inspection_number, lot?.lot_number ? `Lot ${lot.lot_number}` : ""].filter(Boolean).join(" - ") || "QC Inspection",
+    r.status ?? "DRAFT",
+    {
+      inspectionNumber: r.inspection_number,
+      grn: r.grn,
+      lot: r.lot,
+      lotNumber: lot?.lot_number,
+      lotStatus: lot?.status,
+      qcStatus: lot?.qc_status,
+      supplierLotNumber: lot?.supplier_lot_number,
+      product: r.item,
+      item: r.item,
+      warehouse: lot?.warehouse,
+      bin: lot?.bin,
+      uom: lot?.uom,
+      initialQty: Number(lot?.initial_quantity ?? 0),
+      remainingQty: Number(lot?.remaining_quantity ?? 0),
+      sourceGrnReference: lot?.source_grn_reference,
+      purchaseReference: lot?.purchase_reference,
+      inspectedAt: r.inspected_at,
+      remarks: r.remarks,
+      disposition: r.fail_disposition,
+      coaReference: r.coa_reference,
+      coaAttachmentUrl: r.coa_attachment_url,
+      certificateCoaReference: lot?.certificate_coa_reference,
+      metrics: r.metrics,
+      ncrReference: r.ncr_reference,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+  return {
+    ...record,
+    status: (r.status ?? record.status) as DocStatus,
+    links: r.grn ? [{ entity: "grns", id: r.grn, label: lot?.source_grn_reference ?? "GRN" }] : [],
+  };
+}
+
+export async function listTypedInspections(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<QCInspectionRow>(
+    PHASE2_TYPED_API.lotInspections,
+    cleanListQuery(query, ["company", "lot", "status", "grn", "search", "page", "page_size"]),
+  );
+  const lots = await Promise.all(rows.map((r) => getTypedInventoryLot(String(r.lot ?? ""))));
+  return rows.map((r, index) => mapTypedInspection(r, lots[index]));
+}
+
+export async function getTypedInspection(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("qc_inspections", id);
+  const row = await apiFetch<QCInspectionRow>(`${PHASE2_TYPED_API.lotInspections}${pk}/`, { silent: true });
+  const lot = await getTypedInventoryLot(String(row.lot ?? ""));
+  return mapTypedInspection(row, lot);
+}
+
+function categoryLabel(category: string | undefined): string {
+  return String(category ?? "")
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+async function currencyCodeMap(): Promise<Map<string, string>> {
+  const rows = await listTypedCurrencies().catch(() => []);
+  return new Map(rows.flatMap((row) => [[row.id, row.code], [row.code, row.code]]));
+}
+
+async function listTypedLandedAllocations(documentId: string): Promise<LandedCostAllocationRow[]> {
+  return listRows<LandedCostAllocationRow>(
+    M2_TYPED_PATHS.landedAllocations,
+    { document: documentId, page_size: 200 },
+  );
+}
+
+export async function listTypedLandedCostComponents(documentId: string): Promise<LandedCostComponentDto[]> {
+  return listRows<LandedCostComponentDto>(
+    M2_TYPED_PATHS.landedComponents,
+    { document: documentId, is_active: true, page_size: 200 },
+  );
+}
+
+function mapTypedLandedCostDocument(
+  r: LandedCostDocumentRow,
+  currencyCode?: string,
+  allocations: LandedCostAllocationRow[] = [],
+): ErpRecord {
+  const components = (r.components ?? []).map((component) => ({
+    ...component,
+    label: categoryLabel(component.category),
+  }));
+  return baseRecord(
+    "landed_cost_documents",
+    r.id,
+    r.document_number ?? r.id,
+    r.reference || r.document_number || "Landed Cost",
+    r.status ?? "DRAFT",
+    {
+      documentNumber: r.document_number,
+      reference: r.reference,
+      lot: r.lot,
+      currency: r.currency,
+      currencyCode: currencyCode || r.currency,
+      purchaseQuantity: r.purchase_quantity,
+      purchaseUnitCost: r.purchase_unit_cost,
+      purchaseValue: r.purchase_value,
+      notes: r.notes,
+      components,
+      allocations,
+      serverStatus: r.status,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.updated_at,
+  );
+}
+
+export async function listTypedLandedCostDocuments(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const [rows, currencies] = await Promise.all([
+    listRows<LandedCostDocumentRow>(
+      M2_TYPED_PATHS.landedDocs,
+      cleanListQuery(query, ["company", "lot", "status", "is_active", "search", "page", "page_size"]),
+    ),
+    currencyCodeMap(),
+  ]);
+  return rows.map((r) => mapTypedLandedCostDocument(r, currencies.get(String(r.currency ?? ""))));
+}
+
+export async function getTypedLandedCostDocument(id: string): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("landed_cost_documents", id);
+  const [row, currencies, allocations] = await Promise.all([
+    apiFetch<LandedCostDocumentRow>(`${M2_TYPED_PATHS.landedDocs}${pk}/`, { silent: true }),
+    currencyCodeMap(),
+    listTypedLandedAllocations(pk),
+  ]);
+  return mapTypedLandedCostDocument(row, currencies.get(String(row.currency ?? "")), allocations);
+}
+
+function landedCostPayload(fields: Record<string, unknown>, code?: string, company?: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    document_number: String(fields.documentNumber ?? fields.document_number ?? code ?? "").trim(),
+    reference: String(fields.reference ?? ""),
+    lot: String(fields.lot ?? "").trim() || null,
+    purchase_quantity: String(fields.purchaseQuantity ?? fields.purchase_quantity ?? 0),
+    purchase_unit_cost: String(fields.purchaseUnitCost ?? fields.purchase_unit_cost ?? 0),
+    notes: String(fields.notes ?? ""),
+  };
+  if (company) body.company = company;
+  if (fields.currency) body.currency = fields.currency;
+  return body;
+}
+
+export async function createTypedLandedCostDocument(partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const { resolveDefaultCompanyId } = await import("./crm");
+  const company = await resolveDefaultCompanyId();
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const currency = await resolveCurrencyId(fields.currency);
+  const body = landedCostPayload({ ...fields, currency }, partial.code, company);
+  if (!body.document_number) throw new Error("Document number is required.");
+  if (!body.currency) throw new Error("Currency is required.");
+  const created = await apiFetch<LandedCostDocumentRow>(M2_TYPED_PATHS.landedDocs, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+  return getTypedLandedCostDocument(created.id);
+}
+
+export async function updateTypedLandedCostDocument(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const pk = await resolveTypedDetailId("landed_cost_documents", id);
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const currency = await resolveCurrencyId(fields.currency);
+  const body = landedCostPayload({ ...fields, currency });
+  delete body.document_number;
+  const updated = await apiFetch<LandedCostDocumentRow>(`${M2_TYPED_PATHS.landedDocs}${pk}/`, {
+    method: "PATCH",
+    body,
+    silent: true,
+  });
+  return getTypedLandedCostDocument(updated.id);
+}
+
+export function previewTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(`${M2_TYPED_PATHS.landedDocs}${id}/preview/`, {
+    method: "POST",
+    silent: true,
   });
 }
 
-export async function listTypedDispatches(): Promise<ErpRecord[]> {
-  const rows = await listRows<Named & { sales_order?: string; warehouse?: string; notes?: string }>(
-    PHASE3_TYPED_API.dispatchNotes,
-  );
-  return rows.map((r) =>
-    baseRecord(
-      "deliveries",
-      r.id,
-      r.document_number ?? r.id,
-      r.notes || r.document_number || "Dispatch",
-      r.status ?? "draft",
-      {
-        salesOrder: r.sales_order,
-        warehouse: r.warehouse,
-        typedId: r.id,
-        typedDispatchId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+export function postTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(PHASE2_TYPED_API.landedCostPost(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export function adjustTypedLandedCost(id: string): Promise<LandedCostPreviewDto> {
+  return apiFetch<LandedCostPreviewDto>(PHASE2_TYPED_API.landedCostAdjust(id), {
+    method: "POST",
+    silent: true,
+  });
+}
+
+export type LandedCostComponentPayload = {
+  document?: string;
+  category: string;
+  description?: string;
+  amount: string;
+  currency: string;
+  exchange_rate?: string;
+  supplier?: string;
+  source_document?: string;
+  source_document_number?: string;
+  tax_amount?: string;
+  cost_date?: string | null;
+  allocation_basis?: string;
+  notes?: string;
+};
+
+export function createTypedLandedCostComponent(body: LandedCostComponentPayload): Promise<LandedCostComponentDto> {
+  return apiFetch<LandedCostComponentDto>(M2_TYPED_PATHS.landedComponents, {
+    method: "POST",
+    body,
+    silent: true,
+  });
+}
+
+export function updateTypedLandedCostComponent(
+  id: string,
+  body: Partial<LandedCostComponentPayload>,
+): Promise<LandedCostComponentDto> {
+  return apiFetch<LandedCostComponentDto>(`${M2_TYPED_PATHS.landedComponents}${id}/`, {
+    method: "PATCH",
+    body,
+    silent: true,
+  });
+}
+
+export function deleteTypedLandedCostComponent(id: string): Promise<void> {
+  return apiFetch<void>(`${M2_TYPED_PATHS.landedComponents}${id}/`, {
+    method: "DELETE",
+    silent: true,
+  });
+}
+
+function referenceLabel(referenceType?: string, referenceId?: string): string {
+  return [referenceType, referenceId].filter(Boolean).join(" ").trim();
+}
+
+function mapTypedStockMovement(r: StockLedgerRow, index = 0): ErpRecord {
+  return baseRecord(
+    "stock_movements",
+    r.id,
+    `LED-${String(index + 1).padStart(4, "0")}`,
+    r.txn_type || "Stock Ledger Entry",
+    "posted",
+    {
+      txnType: r.txn_type,
+      type: r.txn_type,
+      item: r.item,
+      lot: r.lot,
+      receiptLayer: r.receipt_layer,
+      warehouse: r.warehouse,
+      bin: r.bin,
+      quantityIn: Number(r.quantity_in ?? 0),
+      quantityOut: Number(r.quantity_out ?? 0),
+      uom: r.uom,
+      unitCost: Number(r.unit_cost ?? 0),
+      totalCost: Number(r.total_cost ?? 0),
+      referenceType: r.reference_type,
+      referenceId: r.reference_id,
+      reference: referenceLabel(r.reference_type, r.reference_id),
+      reason: r.reason,
+      isStateEvent: Boolean(r.is_state_event),
+      typedId: r.id,
+    },
+    [],
+    r.occurred_at || r.created_at,
+    r.created_at,
   );
 }
 
-export async function listTypedInvoices(): Promise<ErpRecord[]> {
-  const rows = await listRows<Named & { customer?: string; sales_order?: string; dispatch_note?: string; total?: string }>(
-    PHASE3_TYPED_API.salesInvoices,
+export async function listTypedStockMovements(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockLedgerRow>(
+    PHASE2_TYPED_API.stockLedger,
+    cleanListQuery(query, ["company", "item", "lot", "txn_type", "warehouse", "search", "page", "page_size"]),
   );
-  return rows.map((r) =>
-    baseRecord(
-      "invoices",
-      r.id,
-      r.document_number ?? r.id,
-      r.document_number || "Sales Invoice",
-      r.status ?? "draft",
-      {
-        customer: r.customer,
-        salesOrder: r.sales_order,
-        delivery: r.dispatch_note,
-        amount: Number(r.total ?? 0),
-        typedId: r.id,
-        typedInvoiceId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+  return rows.map(mapTypedStockMovement);
+}
+
+function mapTypedStockReservation(r: StockReservationRow): ErpRecord {
+  return baseRecord(
+    "stock_reservations",
+    r.id,
+    `RES-${r.id.slice(0, 8)}`,
+    referenceLabel(r.reference_type, r.reference_id) || r.item || "Stock Reservation",
+    r.status ?? "OPEN",
+    {
+      item: r.item,
+      lot: r.lot,
+      receiptLayer: r.receipt_layer,
+      warehouse: r.warehouse,
+      quantity: Number(r.quantity ?? 0),
+      uom: r.uom,
+      referenceType: r.reference_type,
+      referenceId: r.reference_id,
+      reference: referenceLabel(r.reference_type, r.reference_id),
+      notes: r.notes,
+      allocations: r.allocations ?? [],
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.created_at,
   );
 }
 
-export async function listTypedInspections(): Promise<ErpRecord[]> {
-  const rows = await listRows<
-    Named & {
-      lot?: string;
-      item?: string;
-      grn?: string;
-      remarks?: string;
-      fail_disposition?: string;
-      coa_reference?: string;
-      coa_attachment_url?: string;
-      metrics?: Record<string, unknown>;
-      ncr_reference?: string;
-    }
-  >(PHASE2_TYPED_API.lotInspections);
-  return rows.map((r) =>
-    baseRecord(
-      "qc_inspections",
-      r.id,
-      r.inspection_number ?? r.id,
-      r.inspection_number || "QC Inspection",
-      r.status ?? "draft",
-      {
-        lot: r.lot,
-        product: r.item,
-        grn: r.grn,
-        remarks: r.remarks,
-        disposition: r.fail_disposition,
-        coaReference: r.coa_reference,
-        coaAttachmentUrl: r.coa_attachment_url,
-        metrics: r.metrics,
-        ncrReference: r.ncr_reference,
-        typedId: r.id,
-      },
-      [],
-      r.created_at,
-      r.updated_at,
-    ),
+export async function listTypedStockReservations(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockReservationRow>(
+    PHASE2_TYPED_API.reservations,
+    cleanListQuery(query, ["company", "item", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedStockReservation);
+}
+
+export async function getTypedStockReservation(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<StockReservationRow>(`${PHASE2_TYPED_API.reservations}${raw}/`, { silent: true });
+  return mapTypedStockReservation(row);
+}
+
+function mapTypedPutaway(r: PutawayRow): ErpRecord {
+  return baseRecord(
+    "putaways",
+    r.id,
+    r.putaway_number ?? r.id,
+    r.putaway_number ?? "Putaway Order",
+    r.status ?? "DRAFT",
+    {
+      lot: r.lot,
+      fromBin: r.from_bin,
+      toWarehouse: r.to_warehouse,
+      toBin: r.to_bin,
+      quantity: Number(r.quantity ?? 0),
+      postedAt: r.posted_at,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.posted_at ?? r.created_at,
   );
 }
 
-export async function listTypedStockMovements(): Promise<ErpRecord[]> {
-  const rows = await listRows<{
-    id: string;
-    txn_type?: string;
-    quantity?: string;
-    item_sku?: string;
-    warehouse_code?: string;
-    reference_type?: string;
-    reference_id?: string;
-    occurred_at?: string;
-    created_at?: string;
-  }>(PHASE2_TYPED_API.stockLedger);
-  return rows.map((r, i) =>
-    baseRecord(
-      "stock_movements",
-      r.id,
-      `LED-${String(i + 1).padStart(4, "0")}`,
-      r.txn_type || "Movement",
-      "posted",
-      {
-        type: r.txn_type,
-        product: r.item_sku,
-        qty: Number(r.quantity ?? 0),
-        warehouse: r.warehouse_code,
-        reference: `${r.reference_type ?? ""} ${r.reference_id ?? ""}`.trim(),
-        typedId: r.id,
-      },
-      [],
-      r.occurred_at || r.created_at,
-      r.created_at,
-    ),
+export async function listTypedPutaways(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<PutawayRow>(
+    PHASE2_TYPED_API.putaways,
+    cleanListQuery(query, ["company", "lot", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedPutaway);
+}
+
+export async function getTypedPutaway(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<PutawayRow>(`${PHASE2_TYPED_API.putaways}${raw}/`, { silent: true });
+  return mapTypedPutaway(row);
+}
+
+function mapTypedStockTransfer(r: StockTransferRow): ErpRecord {
+  return baseRecord(
+    "stock_transfers",
+    r.id,
+    r.transfer_number ?? r.id,
+    r.transfer_number ?? "Stock Transfer",
+    r.status ?? "DRAFT",
+    {
+      item: r.item,
+      lot: r.lot,
+      quantity: Number(r.quantity ?? 0),
+      uom: r.uom,
+      fromWarehouse: r.from_warehouse,
+      fromBin: r.from_bin,
+      toWarehouse: r.to_warehouse,
+      toBin: r.to_bin,
+      postedAt: r.posted_at,
+      notes: r.notes,
+      typedId: r.id,
+    },
+    [],
+    r.created_at,
+    r.posted_at ?? r.created_at,
   );
 }
 
-export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | null> {
+export async function listTypedStockTransfers(query?: TypedListQuery): Promise<ErpRecord[]> {
+  const rows = await listRows<StockTransferRow>(
+    PHASE2_TYPED_API.transfersV2,
+    cleanListQuery(query, ["company", "item", "status", "page", "page_size"]),
+  );
+  return rows.map(mapTypedStockTransfer);
+}
+
+export async function getTypedStockTransfer(id: string): Promise<ErpRecord> {
+  const raw = String(id ?? "").trim();
+  if (!raw) throw new Error("Record id is required.");
+  const row = await apiFetch<StockTransferRow>(`${PHASE2_TYPED_API.transfersV2}${raw}/`, { silent: true });
+  return mapTypedStockTransfer(row);
+}
+
+export async function listM2TypedEntity(entity: string, query?: TypedListQuery): Promise<ErpRecord[] | null> {
   switch (entity) {
     case "suppliers":
-      return listTypedSuppliers();
+      return listTypedSuppliers(query);
     case "products":
       return listTypedProducts();
     case "warehouses":
@@ -758,27 +2393,78 @@ export async function listM2TypedEntity(entity: string): Promise<ErpRecord[] | n
     case "bins":
       return listTypedBins();
     case "purchase_orders":
-      return listTypedPurchaseOrders();
+      return listTypedPurchaseOrders(query);
     case "proforma_invoices":
-      return listTypedProformaInvoices();
+      return listTypedProformaInvoices(query);
     case "letters_of_credit":
-      return listTypedLettersOfCredit();
+      return listTypedLettersOfCredit(query);
+    case "shipments":
+      return listTypedShipments(query);
     case "gate_entries":
-      return listTypedGateEntries();
+      return listTypedGateEntries(query);
     case "grns":
-      return listTypedGrns();
+      return listTypedGrns(query);
     case "purchase_bills":
       return listTypedBills();
     case "sales_orders":
-      return listTypedSalesOrders();
+      return listTypedSalesOrders(query);
     case "deliveries":
-      return listTypedDispatches();
+      return listTypedDispatches(query);
     case "invoices":
-      return listTypedInvoices();
+      return listTypedInvoices(query);
     case "qc_inspections":
-      return listTypedInspections();
+      return listTypedInspections(query);
+    case "landed_cost_documents":
+      return listTypedLandedCostDocuments(query);
+    case "inventory_lots":
+      return listTypedInventoryLots(query);
+    case "stock_reservations":
+      return listTypedStockReservations(query);
     case "stock_movements":
-      return listTypedStockMovements();
+      return listTypedStockMovements(query);
+    case "stock_transfers":
+      return listTypedStockTransfers(query);
+    case "putaways":
+      return listTypedPutaways(query);
+    default:
+      return null;
+  }
+}
+
+export async function getM2TypedEntity(entity: string, id: string): Promise<ErpRecord | null> {
+  switch (entity) {
+    case "suppliers":
+      return getTypedSupplier(id);
+    case "purchase_orders":
+      return getTypedPurchaseOrder(id);
+    case "proforma_invoices":
+      return getTypedProformaInvoice(id);
+    case "letters_of_credit":
+      return getTypedLetterOfCredit(id);
+    case "shipments":
+      return getTypedShipment(id);
+    case "gate_entries":
+      return getTypedGateEntry(id);
+    case "grns":
+      return getTypedGrn(id);
+    case "qc_inspections":
+      return getTypedInspection(id);
+    case "landed_cost_documents":
+      return getTypedLandedCostDocument(id);
+    case "inventory_lots":
+      return getTypedInventoryLotRecord(id);
+    case "stock_reservations":
+      return getTypedStockReservation(id);
+    case "stock_transfers":
+      return getTypedStockTransfer(id);
+    case "putaways":
+      return getTypedPutaway(id);
+    case "sales_orders":
+      return getTypedSalesOrder(id);
+    case "deliveries":
+      return getTypedDispatch(id);
+    case "invoices":
+      return getTypedInvoice(id);
     default:
       return null;
   }
@@ -801,6 +2487,9 @@ const TYPED_WORKFLOW_ACTIONS: Record<string, Partial<Record<DocStatus, (id: stri
     cancelled: PHASE2_TYPED_API.gateCancel,
   },
   grns: { posted: PHASE2_TYPED_API.grnPost },
+  landed_cost_documents: { posted: PHASE2_TYPED_API.landedCostPost },
+  stock_transfers: { posted: PHASE2_TYPED_API.transferPost },
+  putaways: { posted: PHASE2_TYPED_API.putawayPost },
   purchase_bills: {
     approved: PHASE3_TYPED_API.supplierBillApproveForAp,
     posted: PHASE3_TYPED_API.supplierBillPost,
@@ -951,3 +2640,42 @@ export async function createTypedProduct(partial: Partial<ErpRecord>): Promise<E
   );
 }
 
+export async function updateTypedProduct(id: string, partial: Partial<ErpRecord>): Promise<ErpRecord> {
+  const fields = (partial.fields ?? {}) as Record<string, unknown>;
+  const productType = String(fields.type ?? "Raw Material");
+  const map = PRODUCT_TYPE_TO_ITEM[productType] ?? PRODUCT_TYPE_TO_ITEM["Raw Material"];
+  const name = String(fields.name ?? partial.title ?? "").trim();
+  if (!name) throw new Error("Product name is required.");
+  const body: Record<string, unknown> = {
+    name,
+    item_type: map.itemType,
+    category: String(fields.category ?? ""),
+    qc_required: map.qc,
+    is_active: partial.status !== "inactive",
+  };
+  if (fields.reorderLevel !== "" && fields.reorderLevel != null) body.reorder_level = String(fields.reorderLevel);
+  if (fields.safetyStock !== "" && fields.safetyStock != null) body.safety_stock = String(fields.safetyStock);
+  if (fields.moq !== "" && fields.moq != null) body.minimum_order_quantity = String(fields.moq);
+  if (fields.maxStock !== "" && fields.maxStock != null) body.maximum_stock = String(fields.maxStock);
+  if (fields.rate !== "" && fields.rate != null) body.standard_cost = String(fields.rate);
+  const updated = await apiFetch<Named & { item_type?: string; qc_required?: boolean; name?: string; sku?: string }>(
+    `${M2_TYPED_PATHS.items}${id}/`,
+    { method: "PATCH", body },
+  );
+  return baseRecord(
+    "products",
+    updated.id,
+    updated.sku ?? updated.code ?? id,
+    updated.name || name,
+    updated.is_active === false ? "inactive" : "active",
+    {
+      ...fields,
+      name: updated.name || name,
+      type: productType,
+      typedId: updated.id,
+    },
+    [],
+    updated.created_at,
+    updated.updated_at,
+  );
+}

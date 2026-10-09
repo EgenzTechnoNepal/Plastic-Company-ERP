@@ -52,8 +52,13 @@ interface DataListPageProps<T> {
   rowKey: (row: T) => string;
   columns: Array<Column<T>>;
   search?: (row: T, query: string) => boolean;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
   searchPlaceholder?: string;
   filters?: Array<ListFilter<T>>;
+  filterValues?: Record<string, string>;
+  onFilterChange?: (key: string, value: string) => void;
+  serverFiltered?: boolean;
   /** Mobile card renderer; falls back to the first four columns. */
   mobileCard?: (row: T) => ReactNode;
   exportName?: string;
@@ -71,8 +76,13 @@ export function DataListPage<T>({
   rowKey,
   columns,
   search,
+  searchValue,
+  onSearchChange,
   searchPlaceholder = "Search…",
   filters = [],
+  filterValues,
+  onFilterChange,
+  serverFiltered = false,
   mobileCard,
   exportName = "export",
   emptyMessage = "No records match your filters.",
@@ -83,19 +93,23 @@ export function DataListPage<T>({
   auditEntity,
 }: DataListPageProps<T>) {
   const navigate = useNavigate();
-  const [query, setQuery] = useState("");
-  const [filterState, setFilterState] = useState<Record<string, string>>({});
+  const [localQuery, setLocalQuery] = useState("");
+  const [localFilterState, setLocalFilterState] = useState<Record<string, string>>({});
+  const query = searchValue ?? localQuery;
+  const filterState = filterValues ?? localFilterState;
 
   const filtered = useMemo(
     () =>
-      rows.filter((row) => {
-        if (query && search && !search(row, query.toLowerCase())) return false;
-        return filters.every((f) => {
-          const value = filterState[f.key] ?? "all";
-          return value === "all" || f.match(row, value);
-        });
-      }),
-    [rows, query, search, filters, filterState],
+      serverFiltered
+        ? rows
+        : rows.filter((row) => {
+            if (query && search && !search(row, query.toLowerCase())) return false;
+            return filters.every((f) => {
+              const value = filterState[f.key] ?? "all";
+              return value === "all" || f.match(row, value);
+            });
+          }),
+    [rows, query, search, filters, filterState, serverFiltered],
   );
 
   const go = (row: T) => {
@@ -134,7 +148,10 @@ export function DataListPage<T>({
               <Input
                 placeholder={searchPlaceholder}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  if (onSearchChange) onSearchChange(e.target.value);
+                  else setLocalQuery(e.target.value);
+                }}
                 className="pl-9"
               />
             </div>
@@ -144,7 +161,10 @@ export function DataListPage<T>({
               <Select
                 key={f.key}
                 value={filterState[f.key] ?? "all"}
-                onValueChange={(v) => setFilterState((s) => ({ ...s, [f.key]: v }))}
+                onValueChange={(v) => {
+                  if (onFilterChange) onFilterChange(f.key, v);
+                  else setLocalFilterState((s) => ({ ...s, [f.key]: v }));
+                }}
               >
                 <SelectTrigger className="w-full min-w-36 sm:w-40">
                   <SelectValue placeholder={f.placeholder} />
