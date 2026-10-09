@@ -300,6 +300,12 @@ class CrossCompanyGrnTests(TestCase):
         self.bin_recv = Bin.objects.create(
             warehouse=self.warehouse, code="RECV-CC", bin_type=BinType.RECEIVING
         )
+        self.other_warehouse = Warehouse.objects.create(
+            company=self.other, code="WH-CC-OTHER", name="Other WH CC"
+        )
+        self.other_bin_recv = Bin.objects.create(
+            warehouse=self.other_warehouse, code="RECV-CC-OTHER", bin_type=BinType.RECEIVING
+        )
         self.user = User.objects.create_superuser(email="cc@ecowrap.com", password="Str0ng!Passw0rd")
 
     def _approved_po(self):
@@ -368,6 +374,19 @@ class CrossCompanyGrnTests(TestCase):
         grn = self._make_grn(item=self.other_item, suffix="ITEM")
         with self.assertRaises(CompanyAccessDenied) as ctx:
             post_grn(grn=grn, user=self.user)
+        self.assertEqual(ctx.exception.code, "CROSS_COMPANY_REFERENCE")
+        grn.refresh_from_db()
+        self.assertEqual(grn.status, GrnStatus.DRAFT)
+
+    def test_cross_company_warehouse_rejected(self):
+        grn = self._make_grn(suffix="WAREHOUSE")
+        grn.warehouse = self.other_warehouse
+        grn.receiving_bin = self.other_bin_recv
+        grn.save(update_fields=["warehouse", "receiving_bin"])
+
+        with self.assertRaises(CompanyAccessDenied) as ctx:
+            post_grn(grn=grn, user=self.user)
+
         self.assertEqual(ctx.exception.code, "CROSS_COMPANY_REFERENCE")
         grn.refresh_from_db()
         self.assertEqual(grn.status, GrnStatus.DRAFT)

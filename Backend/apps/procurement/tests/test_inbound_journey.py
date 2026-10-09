@@ -2,15 +2,26 @@
 
 from decimal import Decimal
 
+from django.db.models import Sum
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import Action, Module, Role, RolePermission, User, UserRole
-from apps.inventory.ledger import StockLedgerEntry, StockTxnType
+from apps.crm.models import Customer
+from apps.inventory.ledger import ReservationStatus, StockLedgerEntry, StockReservation, StockTxnType
 from apps.inventory.models import InventoryLot, InventoryReceiptLayer, LotStatus
+from apps.inventory.stock_services import compute_balances
 from apps.organization.models import Branch, Company
 from apps.procurement.commercial import PurchaseOrder, PurchaseOrderStatus
 from apps.procurement.inbound import GateEntry, GateEntryStatus, GoodsReceiptNote
 from apps.quality.qc import QCInspection, QCInspectionStatus
+from apps.sales.commercial import (
+    DispatchNote,
+    DispatchNoteStatus,
+    SalesInvoice,
+    SalesInvoiceStatus,
+    SalesOrder,
+    SalesOrderStatus,
+)
 from apps.system.management.commands import seed_m2_demo_chain as seed
 from apps.warehouse.models import BinType
 
@@ -85,7 +96,14 @@ class InboundJourneyAPITests(APITestCase):
         self.assertEqual(grn["status"], "POSTED")
 
         gate = GateEntry.objects.get(purchase_order=self.live_po)
+        posted_grn = GoodsReceiptNote.objects.get(pk=grn["id"])
         self.assertEqual(gate.status, GateEntryStatus.LINKED_TO_GRN)
+        self.assertEqual(gate.company_id, self.live_po.company_id)
+        self.assertEqual(gate.supplier_id, self.live_po.supplier_id)
+        self.assertEqual(posted_grn.company_id, self.live_po.company_id)
+        self.assertEqual(posted_grn.supplier_id, self.live_po.supplier_id)
+        self.assertEqual(posted_grn.warehouse_id, self.live_po.destination_warehouse_id)
+        self.assertEqual(posted_grn.receiving_bin.code, seed.BIN_RECV)
         lot = InventoryLot.objects.get(source_grn_id=grn["id"])
         self.assertEqual(lot.status, LotStatus.QC_HOLD)
         self.assertEqual(lot.bin.bin_type, BinType.QC_HOLD)
@@ -150,6 +168,230 @@ class InboundJourneyAPITests(APITestCase):
         self.assertIn(StockTxnType.GRN_RECEIPT, txn_types)
         self.assertIn(StockTxnType.LANDED_COST_REVALUE, txn_types)
         self.assertFalse(final["actions"]["can_putaway"])
+
+    def test_api_smoke_purchase_to_invoice_transaction_chain(self):
+        journey = self._journey(self.live_po)
+        self.assertEqual(journey["purchase_order"]["supplier"]["code"], seed.SUP_CN)
+        item = self.live_po.lines.get().item
+        initial_balance = compute_balances(company=self.live_po.company, item=item)
+        initial_layers = InventoryReceiptLayer.objects.filter(
+            company=self.live_po.company,
+            item=item,
+            is_active=True,
+        ).aggregate(
+            remaining=Sum("remaining_quantity"),
+            reserved=Sum("reserved_quantity"),
+        )
+        initial_remaining = initial_layers["remaining"] or Decimal("0")
+        initial_reserved = initial_layers["reserved"] or Decimal("0")
+
+        grn_data = self._gate_and_grn(self.live_po)
+        grn = GoodsReceiptNote.objects.get(pk=grn_data["id"])
+        gate = GateEntry.objects.get(pk=grn.gate_entry_id)
+        lot = InventoryLot.objects.get(source_grn=grn)
+        self.assertEqual(gate.purchase_order_id, self.live_po.id)
+        self.assertEqual(grn.supplier_id, self.live_po.supplier_id)
+        self.assertEqual(grn.warehouse_id, self.live_po.destination_warehouse_id)
+        self.assertEqual(lot.status, LotStatus.QC_HOLD)
+
+        balance = compute_balances(company=self.live_po.company, item=item)
+        self.assertEqual(
+            Decimal(balance["qc_hold"]),
+            Decimal(initial_balance["qc_hold"]) + Decimal("100"),
+        )
+        self.assertEqual(
+            Decimal(balance["available_to_consume"]),
+            Decimal(initial_balance["available_to_consume"]),
+        )
+
+        inspection_id = self._journey(self.live_po)["lots"][0]["actions"]["qc_inspection_id"]
+        passed = self.client.post(
+            f"{API}/quality/lot-inspections/{inspection_id}/pass/",
+            {"coa_reference": "COA-SMOKE-1"},
+            format="json",
+        )
+        self.assertEqual(passed.status_code, 200, passed.content)
+        lot.refresh_from_db()
+        self.assertEqual(lot.status, LotStatus.AVAILABLE)
+        balance = compute_balances(company=self.live_po.company, item=item)
+        self.assertEqual(
+            Decimal(balance["qc_hold"]),
+            Decimal(initial_balance["qc_hold"]),
+        )
+        self.assertEqual(
+            Decimal(balance["available_to_consume"]),
+            Decimal(initial_balance["available_to_consume"]) + Decimal("100"),
+        )
+
+        uom = self.live_po.lines.get().uom
+        customer = Customer.objects.get(company=self.live_po.company, code=seed.CUST_A)
+        warehouse_id = self.live_po.destination_warehouse_id
+        order_response = self.client.post(
+            f"{API}/sales/sales-orders/",
+            {
+                "company": str(self.live_po.company_id),
+                "customer": str(customer.id),
+                "currency": str(self.live_po.currency_id),
+                "warehouse": str(warehouse_id),
+                "lines": [
+                    {
+                        "item": str(item.id),
+                        "uom": str(uom.id),
+                        "warehouse": str(warehouse_id),
+                        "ordered_quantity": "25",
+                        "unit_price": "1800",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(order_response.status_code, 201, order_response.content)
+        order = SalesOrder.objects.get(pk=order_response.json()["id"])
+        order_line = order.lines.get()
+
+        with self.assertLogs("apps.events", level="INFO") as confirmation_events:
+            confirmation = self.client.post(
+                f"{API}/sales/sales-orders/{order.id}/confirm/", {}, format="json"
+            )
+        self.assertEqual(confirmation.status_code, 200, confirmation.content)
+        self.assertTrue(
+            any("domain_event=SalesOrderConfirmed" in entry for entry in confirmation_events.output)
+        )
+        order.refresh_from_db()
+        order_line.refresh_from_db()
+        self.assertEqual(order.status, SalesOrderStatus.RESERVED)
+        self.assertEqual(order_line.reserved_quantity, Decimal("25"))
+        layers_after_reservation = InventoryReceiptLayer.objects.filter(
+            company=self.live_po.company,
+            item=item,
+            is_active=True,
+        ).aggregate(
+            remaining=Sum("remaining_quantity"),
+            reserved=Sum("reserved_quantity"),
+        )
+        self.assertEqual(
+            layers_after_reservation["remaining"],
+            initial_remaining + Decimal("100"),
+        )
+        self.assertEqual(
+            layers_after_reservation["reserved"],
+            initial_reserved + Decimal("25"),
+        )
+        balance = compute_balances(company=self.live_po.company, item=item)
+        self.assertEqual(
+            Decimal(balance["available_to_consume"]),
+            Decimal(initial_balance["available_to_consume"]) + Decimal("75"),
+        )
+        self.assertTrue(
+            StockReservation.objects.filter(
+                reference_id=order_line.id,
+                status=ReservationStatus.OPEN,
+                quantity=Decimal("25"),
+            ).exists()
+        )
+
+        dispatch_response = self.client.post(
+            f"{API}/sales/dispatch-notes/",
+            {
+                "company": str(self.live_po.company_id),
+                "sales_order": str(order.id),
+                "warehouse": str(warehouse_id),
+                "lines": [
+                    {
+                        "sales_order_line": str(order_line.id),
+                        "quantity": "25",
+                        "uom": str(uom.id),
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(dispatch_response.status_code, 201, dispatch_response.content)
+        dispatch = DispatchNote.objects.get(pk=dispatch_response.json()["id"])
+        with self.assertLogs("apps.events", level="INFO") as dispatch_events:
+            posted_dispatch = self.client.post(
+                f"{API}/sales/dispatch-notes/{dispatch.id}/post/", {}, format="json"
+            )
+        self.assertEqual(posted_dispatch.status_code, 200, posted_dispatch.content)
+        self.assertTrue(
+            any("domain_event=DispatchPosted" in entry for entry in dispatch_events.output)
+        )
+        dispatch.refresh_from_db()
+        order_line.refresh_from_db()
+        self.assertEqual(dispatch.status, DispatchNoteStatus.POSTED)
+        self.assertEqual(order_line.dispatched_quantity, Decimal("25"))
+        layers_after_dispatch = InventoryReceiptLayer.objects.filter(
+            company=self.live_po.company,
+            item=item,
+            is_active=True,
+        ).aggregate(
+            remaining=Sum("remaining_quantity"),
+            reserved=Sum("reserved_quantity"),
+        )
+        self.assertEqual(
+            layers_after_dispatch["remaining"],
+            initial_remaining + Decimal("75"),
+        )
+        self.assertEqual(
+            layers_after_dispatch["reserved"],
+            initial_reserved,
+        )
+        issue = StockLedgerEntry.objects.get(
+            reference_type="DISPATCH",
+            reference_id=dispatch.id,
+            txn_type=StockTxnType.ISSUE,
+        )
+        self.assertEqual(issue.quantity_out, Decimal("25"))
+        self.assertFalse(
+            StockReservation.objects.filter(
+                reference_id=order_line.id,
+                status=ReservationStatus.OPEN,
+            ).exists()
+        )
+
+        invoice_response = self.client.post(
+            f"{API}/sales/sales-invoices/",
+            {
+                "company": str(self.live_po.company_id),
+                "customer": str(customer.id),
+                "sales_order": str(order.id),
+                "dispatch_note": str(dispatch.id),
+                "currency": str(self.live_po.currency_id),
+                "lines": [
+                    {
+                        "sales_order_line": str(order_line.id),
+                        "item": str(item.id),
+                        "uom": str(uom.id),
+                        "quantity": "25",
+                        "unit_price": "1800",
+                    }
+                ],
+            },
+            format="json",
+        )
+        self.assertEqual(invoice_response.status_code, 201, invoice_response.content)
+        invoice = SalesInvoice.objects.get(pk=invoice_response.json()["id"])
+        ledger_count_before_invoice_post = StockLedgerEntry.objects.count()
+        with self.assertLogs("apps.events", level="INFO") as invoice_events:
+            posted_invoice = self.client.post(
+                f"{API}/sales/sales-invoices/{invoice.id}/post/", {}, format="json"
+            )
+        self.assertEqual(posted_invoice.status_code, 200, posted_invoice.content)
+        self.assertTrue(
+            any("domain_event=SalesInvoicePosted" in entry for entry in invoice_events.output)
+        )
+        invoice.refresh_from_db()
+        order_line.refresh_from_db()
+        self.assertEqual(invoice.status, SalesInvoiceStatus.POSTED)
+        self.assertEqual(invoice.lines.get().quantity, Decimal("25"))
+        self.assertEqual(order_line.invoiced_quantity, Decimal("25"))
+        self.assertEqual(StockLedgerEntry.objects.count(), ledger_count_before_invoice_post)
+
+        balance = compute_balances(company=self.live_po.company, item=item)
+        self.assertEqual(
+            Decimal(balance["available_to_consume"]),
+            Decimal(initial_balance["available_to_consume"]) + Decimal("75"),
+        )
 
     def test_lc_gate_blocks_gate_entry_without_side_effects(self):
         data = self._journey(self.blocked_po)
@@ -217,6 +459,62 @@ class InboundJourneyAPITests(APITestCase):
         zero = self._receive(gate_id, self.live_po, qty="0")
         self.assertEqual(zero.status_code, 400)
         self.assertFalse(GoodsReceiptNote.objects.filter(gate_entry_id=gate_id).exists())
+
+    def test_api_partial_receipt_over_receipt_and_duplicate_post_are_atomic(self):
+        line = self.live_po.lines.get()
+        first_gate = self._record_gate(self.live_po)
+        self.assertEqual(first_gate.status_code, 201, first_gate.content)
+        first_grn = self._receive(first_gate.json()["data"]["id"], self.live_po, qty="60")
+        self.assertEqual(first_grn.status_code, 201, first_grn.content)
+
+        line.refresh_from_db()
+        self.live_po.refresh_from_db()
+        self.assertEqual(line.received_quantity, Decimal("60"))
+        self.assertEqual(self.live_po.status, PurchaseOrderStatus.PARTIALLY_RECEIVED)
+        first_grn_id = first_grn.json()["data"]["id"]
+        first_ledger_count = StockLedgerEntry.objects.filter(
+            txn_type=StockTxnType.GRN_RECEIPT, reference_id=first_grn_id
+        ).count()
+        self.assertEqual(first_ledger_count, 1)
+
+        second_gate = self._record_gate(self.live_po)
+        self.assertEqual(second_gate.status_code, 201, second_gate.content)
+        second_gate_id = second_gate.json()["data"]["id"]
+
+        # The policy permits at most 2% above ordered quantity (102 KG total).
+        over_receive = self._receive(second_gate_id, self.live_po, qty="43")
+        self.assertEqual(over_receive.status_code, 400, over_receive.content)
+        self.assertFalse(GoodsReceiptNote.objects.filter(gate_entry_id=second_gate_id).exists())
+        line.refresh_from_db()
+        self.assertEqual(line.received_quantity, Decimal("60"))
+        self.assertEqual(
+            StockLedgerEntry.objects.filter(
+                txn_type=StockTxnType.GRN_RECEIPT, reference_id=first_grn_id
+            ).count(),
+            first_ledger_count,
+        )
+
+        final_grn = self._receive(second_gate_id, self.live_po, qty="40")
+        self.assertEqual(final_grn.status_code, 201, final_grn.content)
+        line.refresh_from_db()
+        self.live_po.refresh_from_db()
+        self.assertEqual(line.received_quantity, Decimal("100"))
+        self.assertEqual(self.live_po.status, PurchaseOrderStatus.RECEIVED)
+
+        ledger_before_duplicate = StockLedgerEntry.objects.filter(
+            txn_type=StockTxnType.GRN_RECEIPT
+        ).count()
+        duplicate_post = self.client.post(
+            f"{API}/purchase/goods-receipts/{final_grn.json()['data']['id']}/post/",
+            {},
+            format="json",
+        )
+        self.assertEqual(duplicate_post.status_code, 400)
+        self.assertEqual(duplicate_post.json()["error"]["code"], "DUPLICATE_POST")
+        self.assertEqual(
+            StockLedgerEntry.objects.filter(txn_type=StockTxnType.GRN_RECEIPT).count(),
+            ledger_before_duplicate,
+        )
 
     def test_viewer_cannot_record_gate(self):
         viewer = User.objects.create_user(email="viewer-inbound@ecowrap.com", password="Str0ng!Passw0rd")

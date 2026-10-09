@@ -51,6 +51,7 @@ from apps.production.models import (
     ProductionOrderStatus,
     ProductionOutput,
     ProductionOutputLine,
+    ProductionLotTraceability,
 )
 from apps.production.services import (
     BOMError,
@@ -404,6 +405,18 @@ class ProductionWorkflowTests(TestCase):
             output_line.lot_id,
             lot.id,
         )
+
+        material_issue_line = material_issue.lines.get()
+        traceability = ProductionLotTraceability.objects.get(
+            production_order=order,
+            material_issue_line=material_issue_line,
+            output_line=output_line,
+            output_lot=lot,
+        )
+        self.assertEqual(traceability.company_id, self.company.id)
+        self.assertEqual(traceability.consumed_lot_id, material_issue_line.lot_id)
+        self.assertEqual(traceability.consumed_layer_id, material_issue_line.receipt_layer_id)
+        self.assertEqual(traceability.quantity_consumed, Decimal("22"))
     def test_production_output_requires_posted_material_issue(self):
         self._available_layer(
             quantity="100",

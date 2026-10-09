@@ -12,7 +12,12 @@ from apps.crm.models import Customer
 from apps.inventory.ledger import ReservationStatus, StockLedgerEntry, StockReservation, StockTxnType
 from apps.inventory.models import Item, ItemType, InventoryLot, InventoryReceiptLayer, LotStatus, UnitOfMeasure
 from apps.inventory.reserved_issue import issue_reserved_stock, ReservedIssueError
-from apps.inventory.stock_services import compute_balances, fifo_issue, reserve_stock
+from apps.inventory.stock_services import (
+    compute_balances,
+    fifo_issue,
+    release_reservation,
+    reserve_stock,
+)
 from apps.organization.models import Company, Currency
 from apps.procurement.inbound import GateEntry, GateEntryStatus, GoodsReceiptLine, GoodsReceiptNote
 from apps.procurement.inbound_services import post_grn
@@ -243,6 +248,129 @@ class DispatchReservedIssueTests(Phase3SalesBase):
             1,
         )
         self.assertEqual(StockReservation.objects.filter(status=ReservationStatus.OPEN).count(), 0)
+
+    def test_partial_dispatches_consume_only_reserved_quantity_and_preserve_audit(self):
+        self._stock_available("100")
+        so = create_sales_order(
+            company=self.company,
+            customer=self.customer,
+            user=self.user,
+            warehouse=self.warehouse,
+        )
+        line = add_so_line(
+            sales_order=so,
+            item=self.item,
+            uom=self.kg,
+            ordered_quantity=Decimal("10"),
+            user=self.user,
+            warehouse=self.warehouse,
+            unit_price=Decimal("15"),
+        )
+        with self.assertLogs("apps.events", level="INFO") as confirmation_logs:
+            confirm_sales_order(sales_order=so, user=self.user)
+        self.assertTrue(
+            any("domain_event=SalesOrderConfirmed" in message for message in confirmation_logs.output)
+        )
+
+        layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-SO-A")
+        self.assertEqual(layer.remaining_quantity, Decimal("100"))
+        self.assertEqual(layer.reserved_quantity, Decimal("10"))
+
+        first = create_dispatch_note(sales_order=so, user=self.user, warehouse=self.warehouse)
+        add_dispatch_line(
+            dispatch=first,
+            sales_order_line=line,
+            quantity=Decimal("4"),
+            user=self.user,
+        )
+        with self.assertLogs("apps.events", level="INFO") as first_dispatch_logs:
+            first = post_dispatch(dispatch=first, user=self.user)
+
+        so.refresh_from_db()
+        line.refresh_from_db()
+        layer.refresh_from_db()
+        self.assertEqual(first.status, DispatchNoteStatus.POSTED)
+        self.assertEqual(so.status, SalesOrderStatus.PARTIALLY_DISPATCHED)
+        self.assertEqual(line.dispatched_quantity, Decimal("4"))
+        self.assertEqual(line.reserved_quantity, Decimal("6"))
+        self.assertEqual(layer.remaining_quantity, Decimal("96"))
+        self.assertEqual(layer.reserved_quantity, Decimal("6"))
+        self.assertTrue(
+            any("domain_event=DispatchPosted" in message for message in first_dispatch_logs.output)
+        )
+        first_issue = StockLedgerEntry.objects.get(
+            txn_type=StockTxnType.ISSUE,
+            reference_type="DISPATCH",
+            reference_id=first.id,
+        )
+        self.assertEqual(first_issue.quantity_out, Decimal("4"))
+        self.assertIn(first.document_number, first_issue.reason)
+
+        second = create_dispatch_note(sales_order=so, user=self.user, warehouse=self.warehouse)
+        add_dispatch_line(
+            dispatch=second,
+            sales_order_line=line,
+            quantity=Decimal("6"),
+            user=self.user,
+        )
+        second = post_dispatch(dispatch=second, user=self.user)
+
+        so.refresh_from_db()
+        line.refresh_from_db()
+        layer.refresh_from_db()
+        self.assertEqual(second.status, DispatchNoteStatus.POSTED)
+        self.assertEqual(so.status, SalesOrderStatus.DISPATCHED)
+        self.assertEqual(line.dispatched_quantity, Decimal("10"))
+        self.assertEqual(line.reserved_quantity, Decimal("0"))
+        self.assertEqual(layer.remaining_quantity, Decimal("90"))
+        self.assertEqual(layer.reserved_quantity, Decimal("0"))
+        issues = StockLedgerEntry.objects.filter(
+            txn_type=StockTxnType.ISSUE,
+            reference_type="DISPATCH",
+            reference_id__in=[first.id, second.id],
+        )
+        self.assertEqual(issues.count(), 2)
+        self.assertEqual(
+            sum((entry.quantity_out for entry in issues), Decimal("0")),
+            Decimal("10"),
+        )
+        self.assertEqual(
+            StockReservation.objects.filter(
+                reference_id=line.id,
+                status=ReservationStatus.OPEN,
+            ).count(),
+            0,
+        )
+
+    def test_dispatch_without_open_reservation_does_not_issue_stock(self):
+        so, line = self._confirmed_so("30")
+        layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-SO-A")
+        reservation = StockReservation.objects.get(
+            reference_id=line.id,
+            status=ReservationStatus.OPEN,
+        )
+        release_reservation(reservation=reservation, user=self.user)
+
+        dispatch = create_dispatch_note(sales_order=so, user=self.user)
+        add_dispatch_line(
+            dispatch=dispatch,
+            sales_order_line=line,
+            quantity=Decimal("30"),
+            user=self.user,
+        )
+        issue_count = StockLedgerEntry.objects.filter(txn_type=StockTxnType.ISSUE).count()
+        with self.assertRaises(ReservedIssueError):
+            post_dispatch(dispatch=dispatch, user=self.user)
+
+        dispatch.refresh_from_db()
+        layer.refresh_from_db()
+        self.assertEqual(dispatch.status, DispatchNoteStatus.DRAFT)
+        self.assertEqual(layer.remaining_quantity, Decimal("100"))
+        self.assertEqual(layer.reserved_quantity, Decimal("0"))
+        self.assertEqual(
+            StockLedgerEntry.objects.filter(txn_type=StockTxnType.ISSUE).count(),
+            issue_count,
+        )
 
     def test_must_not_release_then_fifo(self):
         """Regression: issue_reserved_stock consumes exact allocations, not independent FIFO."""

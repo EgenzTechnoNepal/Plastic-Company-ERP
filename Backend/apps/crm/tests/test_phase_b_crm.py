@@ -258,6 +258,108 @@ class CrmServiceIsolationTests(TestCase):
             )
         self.assertEqual(ctx.exception.code, "CONTACT_MISMATCH")
 
+    def test_customer_activity_rejects_supplier_contact(self):
+        customer = create_customer(
+            company=self.company,
+            code="CUST-ACT-MISMATCH",
+            legal_name="Activity Customer",
+            user=self.user,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company,
+            code="SUP-ACT-MISMATCH",
+            legal_name="Activity Supplier",
+            trading_name="Activity Supplier",
+            preferred_incoterm=self.fob,
+        )
+        supplier_contact = create_contact(
+            company=self.company,
+            name="Supplier Contact",
+            user=self.user,
+            party_kind=ContactParty.SUPPLIER,
+            supplier=supplier,
+        )
+
+        with self.assertRaises(CrmError) as ctx:
+            create_activity(
+                company=self.company,
+                subject="Customer activity with supplier contact",
+                user=self.user,
+                customer=customer,
+                contact=supplier_contact,
+            )
+        self.assertEqual(ctx.exception.code, "CONTACT_MISMATCH")
+
+    def test_supplier_activity_rejects_customer_contact(self):
+        customer = create_customer(
+            company=self.company,
+            code="CUST-SUP-ACT-MISMATCH",
+            legal_name="Activity Customer",
+            user=self.user,
+        )
+        supplier = Supplier.objects.create(
+            company=self.company,
+            code="SUP-CUST-ACT-MISMATCH",
+            legal_name="Activity Supplier",
+            trading_name="Activity Supplier",
+            preferred_incoterm=self.fob,
+        )
+        customer_contact = create_contact(
+            company=self.company,
+            name="Customer Contact",
+            user=self.user,
+            party_kind=ContactParty.CUSTOMER,
+            customer=customer,
+        )
+
+        with self.assertRaises(CrmError) as ctx:
+            create_activity(
+                company=self.company,
+                subject="Supplier activity with customer contact",
+                user=self.user,
+                supplier=supplier,
+                contact=customer_contact,
+            )
+        self.assertEqual(ctx.exception.code, "CONTACT_MISMATCH")
+
+    def test_customer_activity_rejects_contact_from_different_customer(self):
+        customer_a = create_customer(
+            company=self.company,
+            code="CUST-ACT-RELATED-A",
+            legal_name="Activity Customer A",
+            user=self.user,
+        )
+        customer_b = create_customer(
+            company=self.company,
+            code="CUST-ACT-RELATED-B",
+            legal_name="Activity Customer B",
+            user=self.user,
+        )
+        contact_a = create_contact(
+            company=self.company,
+            name="Customer A Contact",
+            user=self.user,
+            party_kind=ContactParty.CUSTOMER,
+            customer=customer_a,
+        )
+
+        with self.assertRaises(CrmError) as ctx:
+            create_activity(
+                company=self.company,
+                subject="Customer B activity with Customer A contact",
+                user=self.user,
+                customer=customer_b,
+                contact=contact_a,
+            )
+        self.assertEqual(ctx.exception.code, "CONTACT_MISMATCH")
+        self.assertFalse(
+            CrmActivity.objects.filter(
+                customer=customer_b,
+                contact=contact_a,
+                subject="Customer B activity with Customer A contact",
+            ).exists()
+        )
+
     def test_activity_create(self):
         cust = create_customer(
             company=self.company, code="CUST-ACT", legal_name="Act Co", user=self.user

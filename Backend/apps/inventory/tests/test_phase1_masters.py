@@ -24,6 +24,7 @@ from apps.inventory.models import (
     UnitOfMeasure,
     UomConversion,
 )
+from apps.inventory.landed_post import post_landed_cost
 from apps.inventory.services import (
     LandedCostError,
     UomConversionError,
@@ -331,8 +332,83 @@ class LandedCostTests(Phase1BaseTestCase):
             currency=self.npr,
             exchange_rate=Decimal("1"),
             allocation_basis=AllocationBasis.VALUE,
+            source_document="FREIGHT_INVOICE",
+            source_document_number="FRT-2026-001",
         )
         self.assertEqual(c.base_currency_amount, Decimal("10000.0000"))
+        self.assertEqual(c.source_document, "FREIGHT_INVOICE")
+        self.assertEqual(c.source_document_number, "FRT-2026-001")
+
+    def _unlinked_landed_cost_document(self, document_number):
+        return LandedCostDocument.objects.create(
+            company=self.company,
+            document_number=document_number,
+            currency=self.npr,
+            purchase_quantity=Decimal("100"),
+            purchase_unit_cost=Decimal("1000"),
+            purchase_value=Decimal("100000"),
+        )
+
+    def test_posted_landed_cost_document_purchase_cost_cannot_be_edited(self):
+        document = self._unlinked_landed_cost_document("LC-POSTED-DOC-EDIT")
+        post_landed_cost(document=document, user=self.user)
+
+        response = self.client.patch(
+            reverse("landed-cost-document-detail", args=[document.id]),
+            {"purchase_unit_cost": "1200"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        document.refresh_from_db()
+        self.assertEqual(document.purchase_unit_cost, Decimal("1000"))
+        self.assertEqual(document.purchase_value, Decimal("100000"))
+
+    def test_posted_landed_cost_component_cannot_be_edited(self):
+        document = self._unlinked_landed_cost_document("LC-POSTED-COMP-EDIT")
+        component = create_landed_component(
+            document,
+            category=LandedCostCategory.INTERNATIONAL_FREIGHT,
+            amount=Decimal("10000"),
+            currency=self.npr,
+            exchange_rate=Decimal("1"),
+            source_document="FREIGHT_INVOICE",
+            source_document_number="FRT-2026-002",
+            user=self.user,
+        )
+        post_landed_cost(document=document, user=self.user)
+
+        response = self.client.patch(
+            reverse("landed-cost-component-detail", args=[component.id]),
+            {"amount": "15000"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        component.refresh_from_db()
+        self.assertEqual(component.amount, Decimal("10000"))
+        self.assertEqual(component.base_currency_amount, Decimal("10000"))
+
+    def test_landed_cost_component_cannot_be_added_after_posting(self):
+        document = self._unlinked_landed_cost_document("LC-POSTED-COMP-ADD")
+        post_landed_cost(document=document, user=self.user)
+
+        response = self.client.post(
+            reverse("landed-cost-component-list"),
+            {
+                "document": str(document.id),
+                "category": LandedCostCategory.INTERNATIONAL_FREIGHT,
+                "amount": "10000",
+                "currency": str(self.npr.id),
+                "exchange_rate": "1",
+                "source_document": "FREIGHT_INVOICE",
+                "source_document_number": "FRT-2026-003",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST, response.data)
+        self.assertFalse(document.components.exists())
 
     def test_acceptance_landed_cost_preview(self):
         """100 KG × NPR 1000 + freight/insurance/customs/clearing/Nepal transport."""

@@ -6,9 +6,12 @@ adjustment, ledger reconciliation, landed-cost late adjustments, company
 isolation at the service layer, and deterministic locking behavior.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
+from threading import Barrier
 
-from django.test import TestCase, TransactionTestCase
+from django.db import close_old_connections
+from django.test import TestCase, TransactionTestCase, skipUnlessDBFeature
 from django.utils import timezone
 
 from apps.accounts.models import User
@@ -989,6 +992,97 @@ class ConcurrencyLockingTests(TransactionTestCase):
         layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-C")
         self.assertEqual(layer.reserved_quantity, Decimal("80.000000"))
 
+    @skipUnlessDBFeature("has_select_for_update")
+    def test_simultaneous_reservation_and_fifo_issue_cannot_overconsume(self):
+        """A reservation and an issue cannot consume the same free stock concurrently."""
+        barrier = Barrier(2)
+        company_id = self.company.id
+        item_id = self.item.id
+        uom_id = self.kg.id
+        user_id = self.user.id
+
+        def reserve():
+            close_old_connections()
+            try:
+                company = Company.objects.get(pk=company_id)
+                item = Item.objects.get(pk=item_id)
+                uom = UnitOfMeasure.objects.get(pk=uom_id)
+                user = User.objects.get(pk=user_id)
+                barrier.wait(timeout=10)
+                try:
+                    reservation = reserve_stock(
+                        company=company,
+                        item=item,
+                        quantity=Decimal("60"),
+                        uom=uom,
+                        user=user,
+                    )
+                except ReservationError as exc:
+                    return "rejected", exc.code
+                return "reserved", str(reservation.id)
+            finally:
+                close_old_connections()
+
+        def issue():
+            close_old_connections()
+            try:
+                company = Company.objects.get(pk=company_id)
+                item = Item.objects.get(pk=item_id)
+                uom = UnitOfMeasure.objects.get(pk=uom_id)
+                user = User.objects.get(pk=user_id)
+                barrier.wait(timeout=10)
+                try:
+                    entries = fifo_issue(
+                        company=company,
+                        item=item,
+                        quantity=Decimal("60"),
+                        uom=uom,
+                        user=user,
+                    )
+                except InsufficientStockError:
+                    return "rejected", None
+                return "issued", [str(entry.id) for entry in entries]
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            reserve_future = executor.submit(reserve)
+            issue_future = executor.submit(issue)
+            reserve_result = reserve_future.result(timeout=30)
+            issue_result = issue_future.result(timeout=30)
+
+        reservation_won = reserve_result[0] == "reserved"
+        issue_won = issue_result[0] == "issued"
+        self.assertNotEqual(reservation_won, issue_won)
+
+        layer = InventoryReceiptLayer.objects.get(lot__lot_number="LOT-C")
+        layer.refresh_from_db()
+        self.assertGreaterEqual(layer.remaining_quantity, Decimal("0"))
+        self.assertGreaterEqual(layer.reserved_quantity, Decimal("0"))
+
+        if reservation_won:
+            self.assertEqual(layer.remaining_quantity, Decimal("100.000000"))
+            self.assertEqual(layer.reserved_quantity, Decimal("60.000000"))
+            self.assertEqual(StockLedgerEntry.objects.filter(txn_type=StockTxnType.ISSUE).count(), 0)
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(txn_type=StockTxnType.RESERVATION).count(),
+                1,
+            )
+        else:
+            self.assertEqual(layer.remaining_quantity, Decimal("40.000000"))
+            self.assertEqual(layer.reserved_quantity, Decimal("0.000000"))
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(
+                    txn_type=StockTxnType.ISSUE,
+                    receipt_layer=layer,
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                StockLedgerEntry.objects.filter(txn_type=StockTxnType.RESERVATION).count(),
+                0,
+            )
+
 
 class ExplicitLayerValidationTests(HardeningBase):
     def test_layer_different_item_rejected(self):
@@ -1294,10 +1388,10 @@ class LandedCostAllCategoriesTests(HardeningBase):
         # Additional costs = 2,000 + 3,000 + ... + 12,000 = 77,000.
         # Landed total = 177,000.
         # Landed unit cost = 177,000 / 100 = 1,770.
-        self.assertEqual(result["purchase_value"], "100000.0000")
-        self.assertEqual(result["additional_costs_total"], "77000.0000")
-        self.assertEqual(result["landed_total"], "177000.0000")
-        self.assertEqual(result["landed_unit_cost"], "1770.000000")
+        self.assertEqual(Decimal(result["purchase_value"]), Decimal("100000.0000"))
+        self.assertEqual(Decimal(result["additional_costs_total"]), Decimal("77000.0000"))
+        self.assertEqual(Decimal(result["landed_total"]), Decimal("177000.0000"))
+        self.assertEqual(Decimal(result["landed_unit_cost"]), Decimal("1770.000000"))
 
         # All 11 additional-cost categories are persisted as components.
         self.assertEqual(doc.components.count(), 11)
