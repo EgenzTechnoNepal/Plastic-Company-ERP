@@ -116,6 +116,8 @@ class CompanyScopedMixin:
     related_company_fields: dict[str, str] = {
         "preferred_supplier": "company",
         "supplier": "company",
+        "gate_entry": "company",
+        "shipment": "company",
         "item": "company",
         "warehouse": "company",
         "bin": "warehouse__company",

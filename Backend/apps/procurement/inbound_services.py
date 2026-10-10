@@ -165,7 +165,7 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
     Does NOT create AVAILABLE stock when item.qc_required.
     """
     grn = (
-        GoodsReceiptNote.objects.select_for_update()
+        GoodsReceiptNote.objects.select_for_update(of=("self",))
         .select_related(
             "company",
             "supplier",
@@ -191,6 +191,8 @@ def post_grn(*, grn: GoodsReceiptNote, user=None) -> GoodsReceiptNote:
 
     assert_related_same_company(grn.company_id, "supplier", grn.supplier)
     assert_related_same_company(grn.company_id, "warehouse", grn.warehouse)
+    assert_related_same_company(grn.company_id, "gate_entry", grn.gate_entry)
+    assert_related_same_company(grn.company_id, "shipment", grn.shipment)
 
     lines = list(
         grn.lines.select_related("item", "uom", "purchase_order_line", "purchase_order_line__purchase_order").all()
