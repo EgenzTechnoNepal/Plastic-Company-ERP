@@ -1,10 +1,10 @@
 """
-Demo foundation API smoke against a running backend seeded with `seed_m2_demo_chain`.
+Demo API smoke against a running backend seeded with `seed_m2_demo_chain --full`.
 
     DEMO_EMAIL=... DEMO_PASSWORD=... [API_BASE=http://127.0.0.1:8000/api/v1] python scripts/demo_api_smoke.py
 
-Checks: real auth (bad password is rejected), the seeded typed chain is readable over the
-typed endpoints, and a typed approval request round-trips (create -> approve, create -> cancel).
+Checks the complete demo chain: Login -> Supplier -> Item -> Warehouse -> Purchase Order
+-> GRN -> QC -> Inventory -> Sales Order -> Reservation -> Dispatch -> Invoice.
 Exits non-zero on the first failure.
 """
 
@@ -62,6 +62,17 @@ def find(token, path, code):
     return 200, None
 
 
+def find_row(token, path, predicate):
+    """Return the first row on a typed list endpoint matching predicate."""
+    status, payload = call("GET", f"{path}?page_size=200", token)
+    if status != 200:
+        return status, None
+    for row in unwrap(payload) or []:
+        if predicate(row):
+            return status, row
+    return status, None
+
+
 status, _ = call("POST", "/auth/login/", body={"email": EMAIL, "password": PASSWORD + "-wrong"})
 check("bad password rejected", status in (400, 401), f"HTTP {status}")
 
@@ -72,6 +83,9 @@ if not token:
     sys.exit(1)
 
 chain = [
+    ("supplier", "/purchase/vendors/", "SUP-CN-PLA", None),
+    ("item", "/inventory/items/", "RM-PLA-001", None),
+    ("warehouse", "/warehouse/facilities/", "WH-RM", None),
     ("purchase order", "/purchase/purchase-orders/", "PO-M2-DEMO-001", None),
     ("proforma invoice", "/purchase/proforma-invoices/", "PI-M2-DEMO-001", None),
     ("letter of credit", "/purchase/letters-of-credit/", "LC-M2-DEMO-001", "DOCS_CLEARED"),
@@ -82,6 +96,9 @@ chain = [
     ("landed cost", "/inventory/landed-cost-documents/", "LCD-M2-DEMO-001", None),
     ("putaway", "/warehouse/putaways/", "PUT-M2-DEMO-001", None),
     ("supplier bill", "/purchase/supplier-bills/", "BILL-M2-DEMO-001", None),
+    ("sales order", "/sales/sales-orders/", "SO-M2-DEMO-001", "INVOICED"),
+    ("dispatch", "/sales/dispatch-notes/", "DN-M2-DEMO-001", "POSTED"),
+    ("invoice", "/sales/sales-invoices/", "INV-M2-DEMO-001", "POSTED"),
 ]
 rows = {}
 for label, path, code, expected_status in chain:
@@ -92,6 +109,42 @@ for label, path, code, expected_status in chain:
     rows[label] = row or {}
 
 po_row = rows["purchase order"] or None
+so_row = rows["sales order"] or None
+
+if po_row and rows["item"].get("id") and rows["warehouse"].get("id"):
+    status, balance = call(
+        "GET",
+        f"/inventory/balances/?company={po_row['company']}&item={rows['item']['id']}"
+        f"&warehouse={rows['warehouse']['id']}",
+        token,
+    )
+    balance = unwrap(balance) if status == 200 else {}
+    check(
+        "inventory balance available quantity",
+        status == 200 and float(balance.get("available_to_consume") or 0) >= 0,
+        f"HTTP {status}, balance={balance}",
+    )
+else:
+    check("inventory balance available quantity", False, "upstream chain object missing")
+
+if so_row:
+    sales_line_ids = {str(line["id"]) for line in so_row.get("lines", [])}
+    status, reservation = find_row(
+        token,
+        "/inventory/reservations/",
+        lambda row: str(row.get("reference_id")) in sales_line_ids,
+    )
+    check(
+        "reservation linked to sales order",
+        status == 200
+        and reservation is not None
+        and str(reservation.get("reference_type")).upper() == "SALES_ORDER_LINE"
+        and str(reservation.get("status")).upper() in {"OPEN", "RELEASED"},
+        f"HTTP {status}, reservation={reservation}",
+    )
+else:
+    check("reservation linked to sales order", False, "sales order was not found")
+
 if po_row:
     for label in ("proforma invoice", "letter of credit", "gate entry", "supplier bill"):
         linked = rows[label].get("purchase_order")

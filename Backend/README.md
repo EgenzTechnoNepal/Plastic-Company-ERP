@@ -177,7 +177,7 @@ bypassed by an env flag.
   requires upper+lower+digit+symbol on any password set through the change-password endpoint.
 - Permission checks are declared per-viewset via a `module_code` (and optional `screen_code`)
   class attribute, enforced by `HasModulePermission`. See
-  [API_DOCS.md §4](API_DOCS.md#4-rbac-model) for the full model and how to grant permissions.
+  [API_DOCS.md §5](API_DOCS.md#5-rbac-model) for the full model and how to grant permissions.
 
 Run `python manage.py seed_demo` to create the RBAC catalogue (all 22 module codes, 9 standard
 roles) and 5 demo users matching the credentials already documented in
@@ -207,6 +207,30 @@ it explicitly.
 - Redoc: `http://localhost:8000/api/redoc/`
 - Raw OpenAPI schema: `http://localhost:8000/api/schema/`
 - Written contract + frontend integration mapping: [API_DOCS.md](API_DOCS.md)
+
+### Milestone 2 demo verification
+
+From the `Backend` directory, prepare and run the deterministic full demo chain:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py seed_m2_demo_chain --full
+.\.venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
+```
+
+In a second terminal, set the demo credentials and run the API smoke test:
+
+```powershell
+$env:DEMO_EMAIL = "admin@ecowrap.com"
+$env:DEMO_PASSWORD = "admin123"
+.\.venv\Scripts\python.exe scripts\demo_api_smoke.py
+```
+
+The smoke test must end with `RESULT PASS`. It covers authentication, master
+data, procurement, receiving, QC, inventory, reservation, dispatch, and
+invoice reads. It reports the failing checkpoint and exits non-zero on failure.
+See [TASK4_API_SMOKE_REPORT.md](TASK4_API_SMOKE_REPORT.md) for the verified
+result and [API_DOCS.md](API_DOCS.md) for endpoint contracts.
 
 Health checks (used by Docker healthcheck and load balancers):
 

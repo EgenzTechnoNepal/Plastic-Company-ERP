@@ -1,10 +1,10 @@
 # GreenFlow ERP — Backend API Documentation
 
-Version 0.1 (Phase A) · Base URL `/api/v1/`
+Version 0.2 (Milestone 2) · Base URL `/api/v1/`
 
 This documents the API **as actually implemented** in this Django backend today. It is the
 counterpart to `eco-craft-flow/API_DOCS.md`, which documents the API the *frontend expects*
-once every module is built. See [§6](#6-frontend-integration-mapping) for how the two reconcile.
+once every module is built. See [§7](#7-frontend-integration-mapping) for how the two reconcile.
 
 ---
 
@@ -74,7 +74,7 @@ Paginated list responses (`EnvelopePageNumberPagination`) populate `meta` with:
 Validation errors populate `fields` with the same per-field structure DRF normally returns
 (`{"email": ["This field is required."]}`), just nested under `error.fields` instead of at the
 response root. `code` is one of a stable set of machine-readable strings (see
-[§5 Error codes](#5-error-codes)) — always prefer switching on `error.code`, not
+[§6 Error codes](#6-error-codes)) — always prefer switching on `error.code`, not
 `error.message`, in frontend error handling.
 
 **Reconciliation note:** the frontend's `src/services/api/client.ts` scaffold currently expects
@@ -86,11 +86,10 @@ work around on the backend.
 
 ---
 
-## 3. Implemented endpoints (Phase A)
+## 3. Implemented endpoints (Phase A and Milestone 2)
 
-Everything below exists today with real models, serializers, permissions and tests. Endpoints
-not listed here (sales, CRM, inventory, production, accounting, etc.) do not exist yet — calling
-them will 404.
+Everything below exists today with real models, serializers, permissions and tests. Endpoint
+availability is limited to the routes documented in this file and the generated OpenAPI schema.
 
 ### 3.1 Auth — `apps.accounts` (`module_code` not applicable; auth endpoints are `AllowAny`/`IsAuthenticated` only)
 
@@ -153,7 +152,90 @@ Filters: `?module=`, `?model_name=`, `?action=`, `?user=`, `?document_number=`. 
 
 ---
 
-## 4. RBAC model
+## 4. Milestone 2 typed workflow APIs
+
+These routes are the supported typed API surface for the inbound and outbound
+demo workflow. All routes require authentication and the relevant module
+permission. UUIDs are used in request bodies and path parameters; human-readable
+document numbers are returned by list/retrieve responses.
+
+| Area | Routes | Key workflow actions |
+|---|---|---|
+| Supplier | `/api/v1/purchase/vendors/` | list, create, retrieve |
+| Customer | `/api/v1/crm/customer-masters/` | list, create, retrieve |
+| Item | `/api/v1/inventory/items/` | list, create, retrieve |
+| Warehouse | `/api/v1/warehouse/facilities/` | list, create, retrieve |
+| Purchase Order | `/api/v1/purchase/purchase-orders/` | create, `/{id}/submit/`, `/{id}/approve/`, `/{id}/inbound-journey/` |
+| Gate Entry | `/api/v1/purchase/inbound-gates/` | list, create, retrieve |
+| GRN | `/api/v1/purchase/goods-receipts/` | list, create, retrieve |
+| QC | `/api/v1/quality/lot-inspections/` | list, create, retrieve |
+| Inventory lots | `/api/v1/inventory/lots/` | list, retrieve, `/{id}/transition/` |
+| Inventory balance | `/api/v1/inventory/balances/` | query with `company`, `item`, optional `warehouse` |
+| Reservations | `/api/v1/inventory/reservations/` | create, list, `/{id}/release/` |
+| Sales Order | `/api/v1/sales/sales-orders/` | create, `/{id}/confirm/` |
+| Dispatch | `/api/v1/sales/dispatch-notes/` | create, `/{id}/post/` |
+| Invoice | `/api/v1/sales/sales-invoices/` | create, `/{id}/post/` |
+
+### Request and response expectations
+
+- Send `Authorization: Bearer <access-token>` on every authenticated request.
+- Send JSON with `Content-Type: application/json`, except file uploads.
+- Successful responses use the `data` envelope; paginated responses also include
+  `meta`.
+- Validation and domain failures use `error.code`, `error.message`, and
+  `error.fields`.
+- Company-scoped resources only expose records belonging to the authenticated
+  user's permitted company. Never use an ID from another company as a substitute
+  for a valid company-scoped reference.
+- The full demo seed ends the outbound workflow with Sales Order `INVOICED`,
+  reservation `RELEASED`, Dispatch `POSTED`, and Invoice `POSTED`.
+- The generated schema at `/api/schema/` and Swagger UI at `/api/docs/` are
+  authoritative for serializer fields and operation details.
+
+### Demo seed and API smoke verification
+
+Run from the `Backend` directory:
+
+```powershell
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py seed_m2_demo_chain --full
+.\.venv\Scripts\python.exe manage.py runserver 127.0.0.1:8000
+```
+
+In a second terminal, set credentials without writing them to source control:
+
+```powershell
+$env:DEMO_EMAIL = "admin@ecowrap.com"
+$env:DEMO_PASSWORD = "admin123"
+.\.venv\Scripts\python.exe scripts\demo_api_smoke.py
+```
+
+The smoke test must finish with `RESULT PASS`. It reports the first failing
+checkpoint and exits non-zero when any request or expected state fails. Set
+`API_BASE` when the API is hosted somewhere other than
+`http://127.0.0.1:8000/api/v1`.
+
+### Test and quality commands
+
+```powershell
+.\.venv\Scripts\python.exe manage.py test
+.\.venv\Scripts\python.exe manage.py makemigrations --check
+.\.venv\Scripts\python.exe manage.py migrate --check
+.\.venv\Scripts\python.exe -m py_compile scripts\demo_api_smoke.py
+```
+
+### Known limitations
+
+- The smoke test reads deterministic seeded records; it does not create every
+  business transaction through the HTTP write endpoints.
+- Task 3 service-level tests provide direct validation and workflow coverage.
+- ISO 17088 references in the product documentation do not constitute product
+  certification. Laboratory test evidence, certification scope, expiry, and
+  compostability acceptance records are not established by these API tests.
+- Some OpenAPI component-name warnings remain documented review items; consult
+  `/api/schema/` before generating an external client.
+
+## 5. RBAC model
 
 Permissions are **not** Django's built-in Group/Permission system. The schema (all in
 `apps.accounts.models`):
@@ -193,7 +275,7 @@ view instead.
 
 ---
 
-## 5. Error codes
+## 6. Error codes
 
 | `error.code` | HTTP status | Meaning |
 |---|---|---|
@@ -215,7 +297,7 @@ DRF's default codes (e.g. `required`, `invalid`) inside `error.fields`.
 
 ---
 
-## 6. Frontend integration mapping
+## 7. Frontend integration mapping
 
 `eco-craft-flow/API_DOCS.md` documents the full target API surface (CRM, Sales, Procurement,
 Inventory, Production, Quality, etc.) that the frontend's form schemas already assume. Status of
@@ -225,11 +307,11 @@ each against what's actually live in this backend:
 |---|---|
 | `POST /api/v1/auth/login/`, `/auth/refresh/`, `/auth/logout/` | **Implemented**, same paths |
 | `/auth/password-reset/`, `/auth/password-reset/confirm/` | Not implemented (Phase B+) |
-| `/api/v1/crm/customers/`, `/crm/leads/`, `/crm/quotations/`, `/crm/dealers/` | Not implemented — `apps.crm` is an empty scaffold |
-| `/api/v1/sales/orders/`, `/sales/invoices/`, `/sales/payments/`, `/sales/returns/` | Not implemented — `apps.sales` is an empty scaffold |
-| `/api/v1/purchase/suppliers/`, `/purchase/orders/`, `/purchase/receipts/`, `/purchase/returns/` | Not implemented — `apps.procurement` is an empty scaffold |
-| `/api/v1/inventory/products/`, `/inventory/movements/` | Not implemented — `apps.inventory` is an empty scaffold |
-| `/api/v1/warehouse/locations/` | Not implemented — `apps.warehouse` is an empty scaffold |
+| `/api/v1/crm/customers/`, `/crm/leads/`, `/crm/quotations/`, `/crm/dealers/` | Legacy frontend paths; use the typed CRM routes documented in §4 where available |
+| `/api/v1/sales/orders/`, `/sales/invoices/`, `/sales/payments/`, `/sales/returns/` | Legacy frontend paths; use the typed Sales Order, Dispatch, and Invoice routes documented in §4 |
+| `/api/v1/purchase/suppliers/`, `/purchase/orders/`, `/purchase/receipts/`, `/purchase/returns/` | Legacy frontend paths; use the typed procurement routes documented in §4 |
+| `/api/v1/inventory/products/`, `/inventory/movements/` | Legacy frontend paths; use the typed Item, Lot, Balance, and Reservation routes documented in §4 |
+| `/api/v1/warehouse/locations/` | Legacy frontend path; use the typed Warehouse and storage routes documented in §4 |
 | `/api/v1/production/boms/`, `/production/orders/`, `/production/schedules/` | Not implemented — `apps.production` is an empty scaffold |
 | `/api/v1/quality/inspections/` | Not implemented — `apps.quality` is an empty scaffold |
 | *(not yet documented on frontend side)* Company/Branch/Department/Fiscal Year setup | **Implemented ahead of schedule** — see [§3.2](#32-organization--appsorganization-module_code--organization) |
@@ -249,10 +331,10 @@ are exactly what `python manage.py seed_demo` creates, so swapping the mock logi
 
 ---
 
-## 7. What's intentionally NOT in Phase A
+## 8. What's intentionally NOT in Phase A
 
-- No sales/CRM/procurement/inventory/production/quality/accounting/HR/payroll models or
-  endpoints — these are Phase B–I.
+- The frontend's legacy target paths are not automatically aliases for the typed Milestone 2
+  routes. Use the route table in §4 and the generated OpenAPI schema as the supported API surface.
 - No workflow/approval engine — `ApprovalRequiredError` exists as an error type future modules
   will raise, but there's no generic approval-chain model yet.
 - No live external integrations (OpenAI/Gemini, WhatsApp, SMS, IRD/CBMS, OCR) — only adapter
@@ -286,7 +368,7 @@ scoped to a company.
 
 This is the logical relationship model the frontend's mock data and form schemas
 (`eco-craft-flow/src/features/forms/definitions.ts`) already assume, and that Phase B–I must
-implement. Nothing below exists in the database yet — see [§7](#7-whats-intentionally-not-in-phase-a).
+implement. Nothing below exists in the database yet — see [§8](#8-whats-intentionally-not-in-phase-a).
 
 ```mermaid
 erDiagram
@@ -355,11 +437,11 @@ Done. API-shape-specific rules:
   without updating that file's expectations in `eco-craft-flow/API_DOCS.md §3` first.
 - Every list endpoint supports `?search=`, `?ordering=`, and `filterset_fields` appropriate to
   that resource (mirror the pattern in [§3.3](#33-audit--appsaudit-module_code--audit)).
-- Every new business-rule error gets a new `error.code` row added to [§5](#5-error-codes) in the
+- Every new business-rule error gets a new `error.code` row added to [§6](#6-error-codes) in the
   same change that introduces it — never reuse `INTERNAL_ERROR` for an expected validation
   failure.
 - Workflow actions (`approve`, `submit`, `post`, `cancel`, `reverse`) are custom `@action`
   endpoints guarded by `HasActionPermission`, not overloaded onto `PATCH`.
-- Update the [frontend integration mapping](#6-frontend-integration-mapping) table the moment a
+- Update the [frontend integration mapping](#7-frontend-integration-mapping) table the moment a
   resource goes from "Not implemented" to live — this table is the single place that answers
   "can the frontend call this yet?".
