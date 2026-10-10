@@ -1,7 +1,8 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.utils import timezone
-from django.test import override_settings,TestCase
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
@@ -23,8 +24,14 @@ from apps.procurement.inbound import (
     GrnStatus,
     ImportShipment,
 )
-from apps.procurement.inbound_services import InboundError,post_grn
-from apps.procurement.models import Incoterm,Supplier
+from apps.procurement.inbound_services import InboundError, post_grn
+from apps.procurement.models import Supplier
+from apps.procurement.po_services import (
+    add_po_line,
+    approve_purchase_order,
+    create_purchase_order,
+    submit_purchase_order,
+)
 from apps.warehouse.models import Bin, BinType, Warehouse
 
 
@@ -120,6 +127,57 @@ class PostGrnCompanyReferenceTests(APITestCase):
         )
         return grn
 
+    def _make_po_backed_grn(self, *, suffix, qty="50"):
+        po = create_purchase_order(
+            company=self.company_a,
+            supplier=self.supplier_a,
+            user=self.user,
+            currency=self.currency,
+            destination_warehouse=self.warehouse,
+        )
+        po_line = add_po_line(
+            purchase_order=po,
+            item=self.item,
+            uom=self.uom,
+            ordered_quantity=Decimal("100"),
+            unit_price=Decimal("10"),
+            tax_pct=Decimal("0"),
+            user=self.user,
+        )
+        submit_purchase_order(purchase_order=po, user=self.user)
+        approve_purchase_order(purchase_order=po, user=self.user)
+        po.refresh_from_db()
+
+        gate = GateEntry.objects.create(
+            company=self.company_a,
+            gate_entry_number=f"GRN-GATE-{suffix}",
+            entry_at=timezone.now(),
+            supplier=self.supplier_a,
+            purchase_order=po,
+            status=GateEntryStatus.SUBMITTED,
+        )
+        grn = GoodsReceiptNote.objects.create(
+            company=self.company_a,
+            grn_number=f"GRN-A-{suffix}",
+            gate_entry=gate,
+            supplier=self.supplier_a,
+            warehouse=self.warehouse,
+            receiving_bin=self.receiving_bin,
+            received_at=timezone.now(),
+            currency=self.currency,
+        )
+        line = GoodsReceiptLine.objects.create(
+            grn=grn,
+            item=self.item,
+            uom=self.uom,
+            received_quantity=Decimal(qty),
+            accepted_quantity=Decimal(qty),
+            purchase_unit_cost=Decimal("10"),
+            lot_number=f"LOT-A-{suffix}",
+            purchase_order_line=po_line,
+        )
+        return grn, gate, po, line
+
     def _inventory_counts(self):
         return (
             InventoryLot.objects.count(),
@@ -183,6 +241,172 @@ class PostGrnCompanyReferenceTests(APITestCase):
             ),
             shipment_before,
         )
+        self.assertEqual(self._inventory_counts(), counts_before)
+
+    def test_post_grn_rejects_receiving_bin_from_another_warehouse(self):
+        other_warehouse = Warehouse.objects.create(
+            company=self.company_a,
+            code="GRN-WH-OTHER",
+            name="Other GRN Warehouse",
+        )
+        other_bin = Bin.objects.create(
+            warehouse=other_warehouse,
+            code="GRN-RECV-OTHER",
+            bin_type=BinType.RECEIVING,
+        )
+        grn = self._make_grn(suffix="BIN-MISMATCH")
+        grn.receiving_bin = other_bin
+        grn.save(update_fields=["receiving_bin"])
+        counts_before = self._inventory_counts()
+
+        with self.assertRaises(InboundError) as context:
+            post_grn(grn=grn, user=self.user)
+
+        self.assertEqual(context.exception.code, "BIN_WAREHOUSE_MISMATCH")
+        grn.refresh_from_db()
+        self.assertEqual(grn.status, GrnStatus.DRAFT)
+        self.assertEqual(self._inventory_counts(), counts_before)
+
+    def test_post_grn_accepts_receiving_bin_from_same_warehouse(self):
+        grn = self._make_grn(suffix="BIN-VALID")
+
+        posted = post_grn(grn=grn, user=self.user)
+
+        self.assertEqual(posted.status, GrnStatus.POSTED)
+        posted.refresh_from_db()
+        self.assertEqual(posted.receiving_bin_id, self.receiving_bin.pk)
+
+    def test_post_grn_rejects_duplicate_post_without_more_inventory_writes(self):
+        grn, gate, po, _line = self._make_po_backed_grn(suffix="DUPLICATE")
+        post_grn(grn=grn, user=self.user)
+        counts_after_first_post = self._inventory_counts()
+        po.refresh_from_db()
+        po_status_after_first_post = po.status
+
+        with self.assertRaises(InboundError) as context:
+            post_grn(grn=grn, user=self.user)
+
+        self.assertEqual(context.exception.code, "DUPLICATE_POST")
+        grn.refresh_from_db()
+        gate.refresh_from_db()
+        po.refresh_from_db()
+        self.assertEqual(grn.status, GrnStatus.POSTED)
+        self.assertEqual(gate.status, GateEntryStatus.LINKED_TO_GRN)
+        self.assertEqual(po.status, po_status_after_first_post)
+        self.assertEqual(self._inventory_counts(), counts_after_first_post)
+
+    def test_post_grn_rejects_over_receipt_without_partial_state(self):
+        grn, gate, _po, line = self._make_po_backed_grn(
+            suffix="OVER-RECEIPT",
+            qty="105",
+        )
+        counts_before = self._inventory_counts()
+
+        with self.assertRaises(InboundError) as context:
+            post_grn(grn=grn, user=self.user)
+
+        self.assertEqual(context.exception.code, "OVER_RECEIPT")
+        grn.refresh_from_db()
+        gate.refresh_from_db()
+        line.refresh_from_db()
+        self.assertEqual(grn.status, GrnStatus.DRAFT)
+        self.assertEqual(gate.status, GateEntryStatus.SUBMITTED)
+        self.assertIsNone(line.lot_id)
+        self.assertIsNone(line.receipt_layer_id)
+        self.assertEqual(self._inventory_counts(), counts_before)
+
+    def test_post_grn_rolls_back_multiline_grn_when_later_line_fails(self):
+        po = create_purchase_order(
+            company=self.company_a,
+            supplier=self.supplier_a,
+            user=self.user,
+            currency=self.currency,
+            destination_warehouse=self.warehouse,
+        )
+        po_lines = [
+            add_po_line(
+                purchase_order=po,
+                item=self.item,
+                uom=self.uom,
+                ordered_quantity=Decimal("100"),
+                unit_price=Decimal("10"),
+                tax_pct=Decimal("0"),
+                user=self.user,
+            )
+            for _ in range(2)
+        ]
+        submit_purchase_order(purchase_order=po, user=self.user)
+        approve_purchase_order(purchase_order=po, user=self.user)
+        gate = GateEntry.objects.create(
+            company=self.company_a,
+            gate_entry_number="GRN-GATE-MULTILINE",
+            entry_at=timezone.now(),
+            supplier=self.supplier_a,
+            purchase_order=po,
+            status=GateEntryStatus.SUBMITTED,
+        )
+        grn = GoodsReceiptNote.objects.create(
+            company=self.company_a,
+            grn_number="GRN-A-MULTILINE",
+            gate_entry=gate,
+            supplier=self.supplier_a,
+            warehouse=self.warehouse,
+            receiving_bin=self.receiving_bin,
+            received_at=timezone.now(),
+            currency=self.currency,
+        )
+        lines = [
+            GoodsReceiptLine.objects.create(
+                grn=grn,
+                item=self.item,
+                uom=self.uom,
+                received_quantity=Decimal(qty),
+                accepted_quantity=Decimal(qty),
+                purchase_unit_cost=Decimal("10"),
+                lot_number=f"LOT-A-MULTILINE-{index}",
+                purchase_order_line=po_line,
+            )
+            for index, (qty, po_line) in enumerate(
+                zip(("60", "105"), po_lines),
+                start=1,
+            )
+        ]
+        counts_before = self._inventory_counts()
+        po.refresh_from_db()
+        po_status_before = po.status
+
+        with self.assertRaises(InboundError) as context:
+            post_grn(grn=grn, user=self.user)
+
+        self.assertEqual(context.exception.code, "OVER_RECEIPT")
+        grn.refresh_from_db()
+        gate.refresh_from_db()
+        po.refresh_from_db()
+        self.assertEqual(grn.status, GrnStatus.DRAFT)
+        self.assertEqual(gate.status, GateEntryStatus.SUBMITTED)
+        self.assertEqual(po.status, po_status_before)
+        for line in lines:
+            line.refresh_from_db()
+            self.assertIsNone(line.lot_id)
+            self.assertIsNone(line.receipt_layer_id)
+        self.assertEqual(self._inventory_counts(), counts_before)
+
+    def test_post_grn_rolls_back_inventory_writes_when_ledger_write_fails(self):
+        grn = self._make_grn(suffix="ROLLBACK")
+        counts_before = self._inventory_counts()
+
+        with patch(
+            "apps.procurement.inbound_services.append_ledger_entry",
+            side_effect=InboundError("Simulated ledger failure."),
+        ):
+            with self.assertRaises(InboundError):
+                post_grn(grn=grn, user=self.user)
+
+        grn.refresh_from_db()
+        grn_line = grn.lines.get()
+        self.assertEqual(grn.status, GrnStatus.DRAFT)
+        self.assertIsNone(grn_line.lot_id)
+        self.assertIsNone(grn_line.receipt_layer_id)
         self.assertEqual(self._inventory_counts(), counts_before)
 
     def test_api_post_rejects_foreign_gate_before_inventory_writes(self):
