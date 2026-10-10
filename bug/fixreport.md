@@ -66,6 +66,6 @@ python manage.py test apps.procurement.tests.test_post_grn_bin_validation --keep
 - `Backend/apps/procurement/tests/test_post_grn_bin_validation.py` — cross-company API/service and posting regression coverage, plus bin, duplicate-post, over-receipt, and rollback cases.
 
 
-## Known limitation
+## Separate follow-up: `submit_gate_entry()` PostgreSQL locking
 
-An additional existing focused GRN/PO test run previously reported two PostgreSQL nullable-join `FOR UPDATE` errors in `submit_gate_entry()`. That separate service path is outside this Task 7 change and remains unresolved.
+This issue is documented as a separate follow-up and is outside Task 7's scope. An additional existing focused GRN/PO test run previously reported two PostgreSQL errors because `submit_gate_entry()` uses an unrestricted `select_for_update()` after `select_related()` joins nullable references (`shipment` and `shipment__purchase_order`). PostgreSQL cannot apply `FOR UPDATE` to the nullable side of an outer join. The locking behavior in `submit_gate_entry()` remains unresolved and should be investigated and fixed in its own change, with PostgreSQL regression coverage.
